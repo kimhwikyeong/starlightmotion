@@ -1,0 +1,484 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>별빛 손짓</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gowun+Dodum&family=Gowun+Batang:wght@700&display=swap">
+<style>
+:root{--ink:#f4efe2;--sub:#b9b3a4;--gold:#e9cf8e;--line:rgba(233,207,142,.3);--panel:rgba(10,12,24,.66)}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:#000;color:var(--ink);font-family:"Gowun Dodum","Noto Sans KR",system-ui,sans-serif;overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none}
+/* 1층: 카메라 */
+#cam{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);filter:brightness(var(--camB,.5)) saturate(.6);opacity:var(--camA,1)}
+#cam.noflip{transform:none}
+#sky{position:fixed;inset:0;background:radial-gradient(ellipse at 50% 30%,rgba(30,40,90,.3),rgba(5,6,16,.5) 75%);pointer-events:none}
+/* 2·3층: 별 + 손 */
+#cv{position:fixed;inset:0;width:100%;height:100%}
+/* 오른쪽 아래 작은 조절판 (평소에는 흐린 점 하나) */
+#knob{position:fixed;right:max(14px,env(safe-area-inset-right));bottom:max(14px,env(safe-area-inset-bottom));width:40px;height:40px;border-radius:999px;border:1px solid rgba(244,239,226,.18);background:rgba(10,12,24,.25);color:rgba(244,239,226,.45);font-size:18px;display:grid;place-items:center;cursor:pointer;transition:opacity .3s}
+#knob.dim{opacity:.35}
+#panel{position:fixed;right:max(14px,env(safe-area-inset-right));bottom:calc(max(14px,env(safe-area-inset-bottom)) + 50px);width:250px;background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:14px 16px 12px;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:none}
+#panel.open{display:block}
+#panel label{display:block;font-size:14px;color:var(--sub);margin:0 0 10px}
+#panel label span{float:right;color:var(--ink)}
+#panel input[type=range]{width:100%;margin:6px 0 0;accent-color:var(--gold);height:28px}
+#panel .row{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+#panel button{font:inherit;font-size:13px;color:var(--ink);background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:10px;min-height:36px;padding:0 10px;cursor:pointer;flex:1 1 auto}
+#panel button.warn{border-color:#ffb36b;color:#ffd7ac}
+#panel .ver{margin-top:8px;font-size:11px;color:rgba(244,239,226,.45);text-align:right}
+/* 손 모양 안내 (시작 화면과 조절판에서만) */
+.guide{list-style:none;margin:0;padding:0;display:grid;gap:4px;text-align:left}
+.guide li{display:flex;align-items:center;gap:10px;font-size:16px;color:var(--ink)}
+.guide li i{font-style:normal;font-size:22px;width:32px;text-align:center}
+.guide li small{color:var(--sub);font-size:14px}
+#help{position:fixed;inset:0;display:none;place-items:center;background:rgba(3,4,10,.55);z-index:5}
+#help.open{display:grid}
+#help .card{background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:18px 22px;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+#help h3,#start h3{margin:0 0 10px;font:700 18px "Gowun Batang",serif;color:var(--gold)}
+#start{position:fixed;inset:0;display:grid;place-items:center;background:radial-gradient(ellipse at 50% 40%,#18204a,#05060c 70%);z-index:10;text-align:center;padding:24px;overflow:auto}
+#start h1{font:700 clamp(40px,8vw,72px)/1.1 "Gowun Batang",serif;margin:0 0 10px;letter-spacing:.02em}
+#start p{color:var(--sub);font-size:18px;margin:0 0 20px;line-height:1.6}
+#start .gbox{display:inline-block;margin:0 0 24px;padding:14px 18px;border:1px solid var(--line);border-radius:16px;background:rgba(255,255,255,.03)}
+#start .go{font:inherit;font-size:22px;background:var(--gold);color:#1a1606;border:0;border-radius:999px;padding:16px 40px;cursor:pointer}
+#start .alt{display:block;margin:14px auto 0;font:inherit;font-size:15px;color:var(--sub);background:none;border:0;text-decoration:underline;cursor:pointer}
+#start .msg{margin-top:16px;font-size:16px;color:#ffd7ac;min-height:1.4em}
+#start .ver2{margin-top:16px;font-size:13px;color:rgba(244,239,226,.5)}
+.toast{position:fixed;left:50%;bottom:16%;transform:translateX(-50%);background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:9px 18px;font-size:16px;opacity:0;transition:opacity .25s;pointer-events:none;white-space:nowrap}
+.toast.show{opacity:1}
+</style>
+</head>
+<body>
+<video id="cam" playsinline muted autoplay></video>
+<div id="sky"></div>
+<canvas id="cv"></canvas>
+
+<button id="knob" class="dim" aria-label="조절판">◐</button>
+<div id="panel">
+  <label>카메라 밝기 <span id="vB"></span><input type="range" id="sB" min="5" max="120" step="1"></label>
+  <label>카메라 투명도 <span id="vA"></span><input type="range" id="sA" min="0" max="100" step="1"></label>
+  <div class="row"><button id="bSave">사진 저장</button><button id="bClear">모두 지우기</button></div>
+  <div class="row"><button id="bFlip">좌우 반전</button><button id="bHelp">손 모양 안내</button></div>
+  <div class="ver" id="ver"></div>
+</div>
+<div id="help"><div class="card"><h3>손 모양</h3><ul class="guide" id="guide2"></ul></div></div>
+<div class="toast" id="toast"></div>
+
+<div id="start">
+  <div>
+    <h1>별빛 손짓</h1>
+    <p>손가락으로 밤하늘에 별을 띄워 보세요.</p>
+    <div class="gbox"><h3>손 모양</h3><ul class="guide" id="guide1"></ul></div><br>
+    <button class="go" id="go">카메라 켜고 시작</button>
+    <button class="alt" id="touchOnly">카메라 없이 손가락(터치)으로 하기</button>
+    <div class="msg" id="msg"></div>
+    <div class="ver2" id="ver2"></div>
+  </div>
+</div>
+
+<script>
+(() => {
+'use strict';
+const APP_VER = '11월 13일 00:15 수정본';
+const MP_VER = '0.10.14';
+const MP_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VER}`;
+const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
+const TEST = /[?&]test=1/.test(location.search);
+
+const $ = id => document.getElementById(id);
+$('ver').textContent = APP_VER; $('ver2').textContent = APP_VER;
+const GUIDE = [['☝️', '검지 하나', '별 가리키기'], ['🤏', '집었다 놓기', '별 만들기'], ['🤏', '별을 집은 채 움직이기', '옮기기'], ['✌️', '브이 + 위아래', '밝기'], ['🤟', '세 손가락으로 별 지나가기', '별자리 잇기'], ['🖐️', '손바닥 펴고 문지르기', '지우기'], ['✊', '주먹', '쉬기']];
+const gl = GUIDE.map(([i, a, b]) => `<li><i>${i}</i>${a} <small>· ${b}</small></li>`).join('');
+$('guide1').innerHTML = gl; $('guide2').innerHTML = gl;
+
+/* ---------- 화면 ---------- */
+const cv = $('cv'), ctx = cv.getContext('2d'), video = $('cam');
+let W = 0, H = 0, DPR = 1;
+function resize() {
+  DPR = Math.min(2, window.devicePixelRatio || 1);
+  W = innerWidth; H = innerHeight;
+  cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+addEventListener('resize', resize); resize();
+const U = () => Math.min(W, H);
+
+/* ---------- 설정 (카메라 밝기·투명도·반전) ---------- */
+const st = { mirror: true, camB: 50, camA: 100 };
+try { Object.assign(st, JSON.parse(localStorage.getItem('starhand-set2') || '{}')); } catch (e) {}
+const saveSet = () => { try { localStorage.setItem('starhand-set2', JSON.stringify(st)); } catch (e) {} };
+function applySet() {
+  video.classList.toggle('noflip', !st.mirror);
+  document.documentElement.style.setProperty('--camB', st.camB / 100);
+  document.documentElement.style.setProperty('--camA', st.camA / 100);
+  $('sB').value = st.camB; $('sA').value = st.camA;
+  $('vB').textContent = st.camB + '%'; $('vA').textContent = (100 - st.camA) + '%';
+}
+$('sB').oninput = e => { st.camB = +e.target.value; applySet(); saveSet(); };
+$('sA').oninput = e => { st.camA = +e.target.value; applySet(); saveSet(); };
+applySet();
+// 투명도 슬라이더는 '불투명한 정도'를 움직이되, 숫자는 투명한 정도로 보여 줘요 (오른쪽 = 카메라가 또렷)
+
+let toastT = 0;
+function toast(t) { const e = $('toast'); e.textContent = t; e.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => e.classList.remove('show'), 1600); }
+
+/* ---------- 별 + 별자리 선 ---------- */
+let stars = [], links = [], nextId = 1;
+const MIN_GAP = () => U() * 0.03;
+function addStar(x, y, b = 0.6) {
+  if (stars.some(s => !s.dying && Math.hypot(s.x - x, s.y - y) < MIN_GAP())) return null;
+  const s = { id: nextId++, x, y, b, born: performance.now(), ph: Math.random() * 6.28, sp: 1.5 + Math.random() * 2, dying: 0 };
+  stars.push(s); return s;
+}
+function killStar(s) { if (!s.dying) s.dying = performance.now(); }
+function nearest(x, y, r) {
+  let best = null, bd = r;
+  for (const s of stars) { if (s.dying) continue; const d = Math.hypot(s.x - x, s.y - y); if (d < bd) { bd = d; best = s; } }
+  return best;
+}
+const byId = id => stars.find(s => s.id === id);
+function link(a, b) {
+  if (!a || !b || a === b) return;
+  if (links.some(l => (l.a === a.id && l.b === b.id) || (l.a === b.id && l.b === a.id))) return;
+  links.push({ a: a.id, b: b.id, born: performance.now() });
+}
+const mag = b => Math.max(1, Math.min(6, Math.round(1 + (1 - b) * 5)));
+
+function drawStar(s, t, hi) {
+  const age = (t - s.born) / 1000;
+  let a = Math.min(1, age * 3), pop = age < 0.35 ? 1 + (0.35 - age) * 3 : 1;
+  if (s.dying) { const d = (t - s.dying) / 450; a *= Math.max(0, 1 - d); pop *= 1 + d * 0.8; }
+  const tw = 0.82 + 0.18 * Math.sin(t / 1000 * s.sp + s.ph);
+  const k = U() / 900;
+  const core = (1.6 + s.b * 4.2) * k * pop, glow = (8 + s.b * 34) * k * pop;
+  const A = a * (0.25 + 0.75 * s.b) * tw;
+  ctx.save(); ctx.globalCompositeOperation = 'lighter';
+  const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, glow);
+  g.addColorStop(0, `rgba(255,248,225,${A})`); g.addColorStop(0.25, `rgba(255,232,170,${A * 0.45})`); g.addColorStop(1, 'rgba(255,220,150,0)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(s.x, s.y, glow, 0, 6.283); ctx.fill();
+  if (s.b > 0.35) {
+    const L = glow * (0.9 + s.b), w = Math.max(0.8, core * 0.45);
+    ctx.strokeStyle = `rgba(255,245,215,${A * 0.55})`; ctx.lineWidth = w; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(s.x - L, s.y); ctx.lineTo(s.x + L, s.y); ctx.moveTo(s.x, s.y - L); ctx.lineTo(s.x, s.y + L); ctx.stroke();
+  }
+  ctx.fillStyle = `rgba(255,255,250,${Math.min(1, A * 1.4)})`; ctx.beginPath(); ctx.arc(s.x, s.y, core, 0, 6.283); ctx.fill();
+  if (hi) { // 고른 별: 바깥에 은은한 빛 고리
+    const rr = glow * 0.7 + 8, gg = ctx.createRadialGradient(s.x, s.y, rr * 0.7, s.x, s.y, rr * 1.15);
+    gg.addColorStop(0, 'rgba(233,207,142,0)'); gg.addColorStop(0.5, `rgba(233,207,142,${0.22 * a})`); gg.addColorStop(1, 'rgba(233,207,142,0)');
+    ctx.fillStyle = gg; ctx.beginPath(); ctx.arc(s.x, s.y, rr * 1.15, 0, 6.283); ctx.fill();
+  }
+  ctx.restore();
+}
+function drawLinks(t) {
+  ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round';
+  links = links.filter(l => { const a = byId(l.a), b = byId(l.b); return a && b; });
+  for (const l of links) {
+    const a = byId(l.a), b = byId(l.b);
+    const fade = Math.min(a.dying ? Math.max(0, 1 - (t - a.dying) / 450) : 1, b.dying ? Math.max(0, 1 - (t - b.dying) / 450) : 1);
+    const grow = Math.min(1, (t - l.born) / 350);
+    const ex = a.x + (b.x - a.x) * grow, ey = a.y + (b.y - a.y) * grow;
+    ctx.strokeStyle = `rgba(170,195,255,${0.18 * fade})`; ctx.lineWidth = 6;
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(ex, ey); ctx.stroke();
+    ctx.strokeStyle = `rgba(215,228,255,${0.6 * fade})`; ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(ex, ey); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/* ---------- 손 모양 판별 ---------- */
+const d2 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+function classify(lm) {
+  const size = d2(lm[0], lm[9]) || 1e-6;
+  const pinchR = d2(lm[4], lm[8]) / size;
+  const ext = [[8, 6], [12, 10], [16, 14], [20, 18]].map(([tip, pip]) => d2(lm[0], lm[tip]) > d2(lm[0], lm[pip]) * 1.12);
+  return { size, pinchR, ext };
+}
+const hand = { cand: 'none', candN: 0, g: 'none', pinching: false, x: 0, y: 0, sizePx: 0, seen: 0, palmT: 0, pts: null, mode: 'cam' };
+function rawGesture(f) {
+  if (hand.pinching ? f.pinchR < 0.45 : f.pinchR < 0.30) return 'pinch';
+  const [i, m, r, p] = f.ext;
+  if (i && m && r && p) return 'palm';
+  if (i && m && r && !p) return 'three';
+  if (i && m && !r && !p) return 'vee';
+  if (i && !m && !r && !p) return 'point';
+  if (!i && !m && !r && !p) return 'fist';
+  return 'other';
+}
+function toScreen(pt) {
+  const vw = video.videoWidth || 1280, vh = video.videoHeight || 720;
+  const sc = Math.max(W / vw, H / vh), dw = vw * sc, dh = vh * sc;
+  const nx = st.mirror ? 1 - pt.x : pt.x;
+  return { x: (W - dw) / 2 + nx * dw, y: (H - dh) / 2 + pt.y * dh, sc: dw };
+}
+
+/* ---------- 손동작 → 별 ---------- */
+let drag = null, pend = null, vee = null, hover = null, chain = null, lastSeen = 0;
+const trail = [];
+const NEED = { pinch: 2, point: 3, vee: 4, three: 4, palm: 4, fist: 4, other: 6 };
+function onHand(lm, t) {
+  lastSeen = t;
+  hand.pts = lm.map(toScreen);
+  const f = classify(lm);
+  const r = rawGesture(f);
+  hand.pinching = r === 'pinch';
+  if (r === hand.cand) hand.candN++; else { hand.cand = r; hand.candN = 1; }
+  const prevG = hand.g;
+  if (hand.cand !== hand.g && hand.candN >= (NEED[hand.cand] || 4) && hand.cand !== 'other') hand.g = hand.cand;
+  const g = hand.g;
+  let p;
+  if (g === 'pinch') p = { x: (lm[4].x + lm[8].x) / 2, y: (lm[4].y + lm[8].y) / 2 };
+  else if (g === 'vee') p = { x: (lm[8].x + lm[12].x) / 2, y: (lm[8].y + lm[12].y) / 2 };
+  else if (g === 'three') p = lm[12];
+  else if (g === 'palm' || g === 'fist') p = { x: (lm[0].x + lm[5].x + lm[9].x + lm[13].x + lm[17].x) / 5, y: (lm[0].y + lm[5].y + lm[9].y + lm[13].y + lm[17].y) / 5 };
+  else p = lm[8];
+  const sp = toScreen(p);
+  hand.sizePx = f.size * sp.sc;
+  if (r !== g && prevG === g && g !== 'none') { hand.seen = t; return; } // 손 모양이 바뀌는 중 = 무시
+  const jump = Math.hypot(sp.x - hand.x, sp.y - hand.y);
+  const a = t - hand.seen > 300 || prevG !== g ? 1 : (jump > U() * 0.08 ? 0.75 : 0.45);
+  hand.x += (sp.x - hand.x) * a; hand.y += (sp.y - hand.y) * a;
+  hand.seen = t;
+  trail.push({ x: hand.x, y: hand.y, t }); while (trail.length > 14) trail.shift();
+  if (prevG !== g) gestureEnd(prevG, t), gestureStart(g, t);
+  gestureMove(g, t);
+}
+function gestureStart(g, t) {
+  if (g === 'pinch') {
+    const s = nearest(hand.x, hand.y, U() * 0.07);
+    if (s) { drag = { s, dx: s.x - hand.x, dy: s.y - hand.y }; hover = s; }
+    else pend = { x: hand.x, y: hand.y, t, moved: 0 };
+  }
+  if (g === 'vee') {
+    const s = nearest(hand.x, hand.y, U() * 0.1) || ((hover && !hover.dying && Math.hypot(hover.x - hand.x, hover.y - hand.y) < U() * 0.2) ? hover : null);
+    vee = s ? { s, y0: hand.y, b0: s.b } : { s: null };
+  }
+  if (g === 'three') chain = { last: nearest(hand.x, hand.y, U() * 0.06) };
+  if (g === 'palm') hand.palmT = t;
+}
+function gestureEnd(g) {
+  if (g === 'pinch') {
+    if (pend && pend.moved < U() * 0.05) { const s = addStar(pend.x, pend.y); if (s) hover = s; }
+    pend = null; drag = null;
+  }
+  if (g === 'vee') vee = null;
+  if (g === 'three') chain = null;
+}
+function gestureMove(g, t) {
+  if (g === 'point') {
+    hover = nearest(hand.x, hand.y, U() * 0.07) || (hover && !hover.dying ? hover : null);
+    if (hover && Math.hypot(hover.x - hand.x, hover.y - hand.y) > U() * 0.2) hover = null;
+  }
+  if (g === 'pinch') {
+    if (drag) { drag.s.x = hand.x + drag.dx; drag.s.y = hand.y + drag.dy; }
+    else if (pend) pend.moved = Math.max(pend.moved, Math.hypot(hand.x - pend.x, hand.y - pend.y));
+  }
+  if (g === 'vee' && vee && vee.s) { vee.s.b = Math.max(0.08, Math.min(1, vee.b0 + (vee.y0 - hand.y) / (U() * 0.35))); hover = vee.s; }
+  if (g === 'three' && chain) {
+    const s = nearest(hand.x, hand.y, U() * 0.055);
+    if (s && s !== chain.last) { if (chain.last && !chain.last.dying) link(chain.last, s); chain.last = s; }
+    if (chain.last && chain.last.dying) chain.last = null;
+  }
+  if (g === 'palm' && t - hand.palmT > 400) {
+    const R = fogR();
+    for (const s of stars) if (!s.dying && Math.hypot(s.x - hand.x, s.y - hand.y) < R * 0.8) killStar(s);
+  }
+}
+function lostHand(t) {
+  if (hand.g !== 'none') { gestureEnd(hand.g, t); hand.g = 'none'; hand.cand = 'none'; hand.candN = 0; hand.pinching = false; }
+  hand.pts = null; trail.length = 0;
+}
+const fogR = () => Math.max(U() * 0.07, hand.sizePx * 0.8);
+
+/* ---------- 손 층 그리기 ---------- */
+function sparkle(x, y, r, A, tint) { // 별빛 커서
+  ctx.save(); ctx.globalCompositeOperation = 'lighter';
+  const c = tint || '255,240,200';
+  const g = ctx.createRadialGradient(x, y, 0, x, y, r * 3.2);
+  g.addColorStop(0, `rgba(${c},${0.55 * A})`); g.addColorStop(0.3, `rgba(${c},${0.18 * A})`); g.addColorStop(1, `rgba(${c},0)`);
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r * 3.2, 0, 6.283); ctx.fill();
+  ctx.fillStyle = `rgba(255,255,250,${0.95 * A})`;
+  ctx.beginPath(); // 네 갈래 반짝임
+  ctx.moveTo(x, y - r * 2.2); ctx.quadraticCurveTo(x, y, x + r * 2.2, y); ctx.quadraticCurveTo(x, y, x, y + r * 2.2); ctx.quadraticCurveTo(x, y, x - r * 2.2, y); ctx.quadraticCurveTo(x, y, x, y - r * 2.2);
+  ctx.fill(); ctx.restore();
+}
+const BONES = [[0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8], [5, 9], [9, 10], [10, 11], [11, 12], [9, 13], [13, 14], [14, 15], [15, 16], [13, 17], [0, 17], [17, 18], [18, 19], [19, 20]];
+function drawHand(t) {
+  const g = hand.g, P = hand.pts;
+  if (!P) return;
+  // 잡힌 손: 마디마다 아주 흐린 별가루
+  ctx.save(); ctx.globalCompositeOperation = 'lighter';
+  ctx.strokeStyle = 'rgba(200,215,255,.10)'; ctx.lineWidth = 1;
+  ctx.beginPath(); for (const [a, b] of BONES) { ctx.moveTo(P[a].x, P[a].y); ctx.lineTo(P[b].x, P[b].y); } ctx.stroke();
+  for (let i = 0; i < 21; i++) {
+    const tip = i === 4 || i === 8 || i === 12 || i === 16 || i === 20;
+    ctx.fillStyle = `rgba(230,236,255,${tip ? 0.32 : 0.16})`;
+    ctx.beginPath(); ctx.arc(P[i].x, P[i].y, tip ? 2.2 : 1.5, 0, 6.283); ctx.fill();
+  }
+  ctx.restore();
+  if (g === 'none') return;
+  const x = hand.x, y = hand.y, tw = 0.85 + 0.15 * Math.sin(t / 140);
+  if (g === 'palm') { // 안개 지우개
+    const on = t - hand.palmT > 400, R = fogR();
+    ctx.save();
+    for (let i = 0; i < 6; i++) {
+      const ang = t / 1400 + i * 1.047, ox = Math.cos(ang) * R * 0.28, oy = Math.sin(ang * 1.3) * R * 0.22, rr = R * (0.55 + 0.12 * Math.sin(t / 900 + i));
+      const fg = ctx.createRadialGradient(x + ox, y + oy, 0, x + ox, y + oy, rr);
+      const A = on ? 0.07 : 0.035;
+      fg.addColorStop(0, `rgba(225,232,245,${A})`); fg.addColorStop(1, 'rgba(225,232,245,0)');
+      ctx.fillStyle = fg; ctx.beginPath(); ctx.arc(x + ox, y + oy, rr, 0, 6.283); ctx.fill();
+    }
+    ctx.restore();
+    return;
+  }
+  // 움직인 자리에 남는 별가루
+  ctx.save(); ctx.globalCompositeOperation = 'lighter';
+  trail.forEach((p, i) => { const k = i / trail.length; ctx.fillStyle = `rgba(255,240,205,${0.22 * k})`; ctx.beginPath(); ctx.arc(p.x, p.y, 1 + 2 * k, 0, 6.283); ctx.fill(); });
+  ctx.restore();
+  if (g === 'fist') { sparkle(x, y, 3, 0.35); return; }
+  if (g === 'three') {
+    sparkle(x, y, 6 * tw, 1, '190,210,255');
+    if (chain && chain.last && !chain.last.dying) { // 이어지는 중인 선
+      ctx.save(); ctx.strokeStyle = 'rgba(200,215,255,.45)'; ctx.lineWidth = 1.2; ctx.setLineDash([3, 6]);
+      ctx.beginPath(); ctx.moveTo(chain.last.x, chain.last.y); ctx.lineTo(x, y); ctx.stroke(); ctx.restore();
+    }
+    return;
+  }
+  sparkle(x, y, (g === 'pinch' ? 5 : 7) * tw, 1);
+  if (g === 'pinch' && pend) { const k = Math.min(1, (t - pend.t) / 250); sparkle(pend.x, pend.y, 3 + 3 * k, 0.6 * k); }
+}
+function drawBright() {
+  if (!(hand.g === 'vee' && vee && vee.s)) return;
+  const s = vee.s, h = U() * 0.22, x = s.x + U() * 0.07, y0 = s.y - h / 2;
+  ctx.save();
+  ctx.fillStyle = 'rgba(255,255,255,.08)'; ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x - 3, y0, 6, h, 3) : ctx.rect(x - 3, y0, 6, h); ctx.fill();
+  const fh = h * s.b; ctx.fillStyle = 'rgba(233,207,142,.85)';
+  ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x - 3, y0 + h - fh, 6, fh, 3) : ctx.rect(x - 3, y0 + h - fh, 6, fh); ctx.fill();
+  ctx.font = '700 17px "Gowun Batang", serif'; ctx.textAlign = 'left'; ctx.fillStyle = 'rgba(255,255,255,.9)';
+  ctx.fillText(mag(s.b) + '등급', x + 12, s.y + 6);
+  ctx.restore();
+}
+function frame(t) {
+  ctx.clearRect(0, 0, W, H);
+  stars = stars.filter(s => !s.dying || t - s.dying < 470);
+  drawLinks(t);
+  for (const s of stars) drawStar(s, t, s === hover && hand.g !== 'none' && hand.g !== 'palm');
+  if (t - lastSeen < 400) { drawHand(t); drawBright(); }
+}
+
+/* ---------- 카메라 + 손 인식 ---------- */
+let landmarker = null, lastVT = -1;
+async function startCamera() {
+  $('msg').textContent = '카메라를 켜는 중…';
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('이 브라우저는 카메라를 쓸 수 없어요 (https 주소인지 확인해 주세요)');
+  const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+  video.srcObject = stream; await video.play();
+  $('msg').textContent = '손 인식 준비 중… (처음 한 번은 조금 걸려요)';
+  const vision = await import(`${MP_URL}/vision_bundle.mjs`);
+  const fileset = await vision.FilesetResolver.forVisionTasks(`${MP_URL}/wasm`);
+  const opts = d => ({ baseOptions: { modelAssetPath: MODEL_URL, delegate: d }, runningMode: 'VIDEO', numHands: 1, minHandDetectionConfidence: 0.6, minHandPresenceConfidence: 0.6, minTrackingConfidence: 0.5 });
+  try { landmarker = await vision.HandLandmarker.createFromOptions(fileset, opts('GPU')); }
+  catch (e) { landmarker = await vision.HandLandmarker.createFromOptions(fileset, opts('CPU')); }
+}
+function detect(t) {
+  if (!landmarker || video.readyState < 2 || video.currentTime === lastVT) return;
+  lastVT = video.currentTime;
+  const res = landmarker.detectForVideo(video, t);
+  if (res && res.landmarks && res.landmarks.length) onHand(res.landmarks[0], t);
+  else if (t - lastSeen > 250) lostHand(t);
+}
+function loop(t) {
+  try { detect(t); } catch (e) { console.warn(e); }
+  if (TEST && window.__hand !== undefined) { const h = window.__hand; window.__hand = undefined; if (h) onHand(h, t); else lostHand(t); }
+  frame(t);
+  requestAnimationFrame(loop);
+}
+
+/* ---------- 터치·마우스 ---------- */
+let tp = null, lastTap = { t: 0, s: null };
+cv.addEventListener('pointerdown', e => {
+  $('panel').classList.remove('open');
+  const s = nearest(e.clientX, e.clientY, U() * 0.06);
+  tp = { id: e.pointerId, x: e.clientX, y: e.clientY, s, dx: s ? s.x - e.clientX : 0, dy: s ? s.y - e.clientY : 0, moved: 0, b0: s ? s.b : 0, bright: false };
+  cv.setPointerCapture(e.pointerId);
+  if (s) { hover = s; tp.hold = setTimeout(() => { if (tp && tp.moved < 8) { tp.bright = true; toast('위아래로 끌면 밝기'); } }, 550); }
+});
+cv.addEventListener('pointermove', e => {
+  if (!tp || tp.id !== e.pointerId) return;
+  tp.moved = Math.max(tp.moved, Math.hypot(e.clientX - tp.x, e.clientY - tp.y));
+  if (tp.s && tp.bright) tp.s.b = Math.max(0.08, Math.min(1, tp.b0 + (tp.y - e.clientY) / (U() * 0.35)));
+  else if (tp.s && tp.moved > 6) { tp.s.x = e.clientX + tp.dx; tp.s.y = e.clientY + tp.dy; }
+});
+cv.addEventListener('pointerup', e => {
+  if (!tp || tp.id !== e.pointerId) return;
+  clearTimeout(tp.hold);
+  const now = performance.now();
+  if (tp.s && tp.moved < 8 && !tp.bright) {
+    if (lastTap.s === tp.s && now - lastTap.t < 380) { killStar(tp.s); lastTap = { t: 0, s: null }; }
+    else lastTap = { t: now, s: tp.s };
+  } else if (!tp.s && tp.moved < 10) addStar(tp.x, tp.y);
+  tp = null;
+});
+
+/* ---------- 조절판 ---------- */
+let knobT = 0;
+$('knob').onclick = () => { $('panel').classList.toggle('open'); $('knob').classList.remove('dim'); clearTimeout(knobT); knobT = setTimeout(() => $('knob').classList.add('dim'), 4000); };
+$('bFlip').onclick = () => { st.mirror = !st.mirror; saveSet(); applySet(); };
+$('bHelp').onclick = () => { $('panel').classList.remove('open'); $('help').classList.add('open'); };
+$('help').onclick = () => $('help').classList.remove('open');
+let clearArm = 0;
+$('bClear').onclick = () => {
+  const b = $('bClear');
+  if (Date.now() - clearArm < 3000) { stars.forEach(killStar); clearArm = 0; b.textContent = '모두 지우기'; b.classList.remove('warn'); return; }
+  clearArm = Date.now(); b.textContent = '한 번 더 누르면 지워요'; b.classList.add('warn');
+  setTimeout(() => { if (Date.now() - clearArm >= 2900) { b.textContent = '모두 지우기'; b.classList.remove('warn'); } }, 3000);
+};
+$('bSave').onclick = async () => {
+  $('panel').classList.remove('open');
+  const c = document.createElement('canvas'); c.width = cv.width; c.height = cv.height;
+  const x = c.getContext('2d'); x.fillStyle = '#000'; x.fillRect(0, 0, c.width, c.height);
+  if (video.videoWidth) {
+    const vw = video.videoWidth, vh = video.videoHeight, sc = Math.max(c.width / vw, c.height / vh), dw = vw * sc, dh = vh * sc;
+    x.save(); x.globalAlpha = st.camA / 100; x.filter = `brightness(${st.camB / 100}) saturate(.6)`;
+    if (st.mirror) { x.translate(c.width, 0); x.scale(-1, 1); }
+    x.drawImage(video, (c.width - dw) / 2, (c.height - dh) / 2, dw, dh); x.restore();
+  }
+  const g = x.createRadialGradient(c.width / 2, c.height * 0.3, 0, c.width / 2, c.height * 0.3, Math.max(c.width, c.height) * 0.7);
+  g.addColorStop(0, 'rgba(30,40,90,.3)'); g.addColorStop(1, 'rgba(5,6,16,.5)'); x.fillStyle = g; x.fillRect(0, 0, c.width, c.height);
+  const keep = lastSeen; lastSeen = -1e9; frame(performance.now()); lastSeen = keep; // 손 층은 빼고 별만
+  x.drawImage(cv, 0, 0);
+  const d = new Date(), p = n => String(n).padStart(2, '0');
+  x.font = `${Math.round(15 * DPR)}px "Gowun Dodum", sans-serif`; x.fillStyle = 'rgba(244,239,226,.6)'; x.textAlign = 'right';
+  x.fillText(`별빛 손짓 · ${d.getFullYear()}.${p(d.getMonth() + 1)}.${p(d.getDate())}`, c.width - 18 * DPR, c.height - 18 * DPR);
+  const blob = await new Promise(r => c.toBlob(r, 'image/png'));
+  const name = `별빛손짓_${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.png`;
+  const file = new File([blob], name, { type: 'image/png' });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) { try { await navigator.share({ files: [file] }); return; } catch (e) { if (e.name === 'AbortError') return; } }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000); toast('사진을 저장했어요');
+};
+
+/* ---------- 시작 ---------- */
+let started = false;
+function begin() { if (started) return; started = true; $('start').style.display = 'none'; requestAnimationFrame(loop); }
+$('go').onclick = async () => {
+  $('go').disabled = true;
+  try { await startCamera(); begin(); }
+  catch (e) {
+    console.warn(e); $('go').disabled = false;
+    const m = String(e && e.message || e);
+    $('msg').textContent = /Permission|NotAllowed/i.test(m) ? '카메라 허용이 필요해요. 주소창의 카메라 설정을 확인해 주세요.' : /NotFound|Requested device/i.test(m) ? '카메라를 찾지 못했어요.' : '시작하지 못했어요: ' + m;
+  }
+};
+$('touchOnly').onclick = () => { hand.mode = 'touch'; begin(); };
+if (TEST) {
+  window.__state = () => ({ stars: stars.filter(s => !s.dying).map(s => ({ id: s.id, x: Math.round(s.x), y: Math.round(s.y), b: +s.b.toFixed(2) })), links: links.map(l => [l.a, l.b]), g: hand.g });
+  window.__setStars = arr => { stars = []; links = []; arr.forEach(([x, y, b]) => { const s = addStar(x, y, b); if (s) s.born -= 2000; }); };
+  window.__link = pairs => { pairs.forEach(([a, b]) => link(stars[a], stars[b])); links.forEach(l => l.born -= 2000); };
+  begin();
+}
+})();
+</script>
+</body>
+</html>
