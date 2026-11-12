@@ -48,6 +48,24 @@ html,body{margin:0;height:100%;background:#000;color:var(--ink);font-family:"Gow
 #start .ver2{margin-top:16px;font-size:13px;color:rgba(244,239,226,.5)}
 .toast{position:fixed;left:50%;bottom:16%;transform:translateX(-50%);background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:9px 18px;font-size:16px;opacity:0;transition:opacity .25s;pointer-events:none;white-space:nowrap}
 .toast.show{opacity:1}
+#shot{position:fixed;right:max(14px,env(safe-area-inset-right));top:50%;transform:translateY(-50%);width:64px;height:64px;border-radius:999px;border:2px solid rgba(244,239,226,.32);background:rgba(10,12,24,.15);cursor:pointer;padding:0}
+#shot::after{content:"";position:absolute;inset:7px;border-radius:999px;background:rgba(244,239,226,.16)}
+#shot:active::after{background:rgba(244,239,226,.6)}
+#count{position:fixed;inset:0;display:none;place-items:center;font:700 min(34vw,260px)/1 "Gowun Batang",serif;color:rgba(255,248,225,.9);text-shadow:0 0 40px rgba(233,207,142,.6);pointer-events:none;z-index:6}
+#flash{position:fixed;inset:0;background:#fff;opacity:0;pointer-events:none;z-index:7;transition:opacity .5s}
+#panel button.on{background:rgba(233,207,142,.22);border-color:var(--gold)}
+.guide li i{width:52px;display:flex;justify-content:center}
+.guide li i svg{height:44px;width:auto}
+.guide li i.emo{width:84px;font-size:26px;font-family:"Apple Color Emoji","Noto Color Emoji","Segoe UI Emoji",sans-serif;white-space:nowrap;gap:2px;align-items:center}
+.guide li i.emo b{font:400 16px "Gowun Batang",serif;color:var(--gold)}
+.guide li i.emo em{font-style:normal;display:inline-block;transform:rotate(90deg)}
+.guide li{white-space:nowrap}
+.guide li i.emo .diag{position:relative;width:60px;height:46px;display:block}
+.guide li i.emo .diag em{position:absolute;font-size:19px}
+.guide li i.emo .diag .a{left:4px;bottom:0}.guide li i.emo .diag .c{right:4px;top:0}
+.guide li i.emo .diag b{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%)}
+#start .guide{grid-template-columns:1fr 1fr;column-gap:22px}
+@media (max-width:720px){#start .guide{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -56,11 +74,14 @@ html,body{margin:0;height:100%;background:#000;color:var(--ink);font-family:"Gow
 <canvas id="cv"></canvas>
 
 <button id="knob" class="dim" aria-label="조절판">◐</button>
+<button id="shot" aria-label="사진 찍기"></button>
+<div id="count"></div><div id="flash"></div>
 <div id="panel">
   <label>카메라 밝기 <span id="vB"></span><input type="range" id="sB" min="5" max="120" step="1"></label>
   <label>카메라 투명도 <span id="vA"></span><input type="range" id="sA" min="0" max="100" step="1"></label>
-  <div class="row"><button id="bSave">사진 저장</button><button id="bClear">모두 지우기</button></div>
-  <div class="row"><button id="bFlip">좌우 반전</button><button id="bHelp">손 모양 안내</button></div>
+  <div class="row"><button id="bTrace">별자리 따라 그리기 켜기</button></div>
+  <div class="row"><button id="bClear">모두 지우기</button><button id="bFlip">좌우 반전</button></div>
+  <div class="row"><button id="bHelp">손 모양 안내</button></div>
   <div class="ver" id="ver"></div>
 </div>
 <div id="help"><div class="card"><h3>손 모양</h3><ul class="guide" id="guide2"></ul></div></div>
@@ -81,16 +102,90 @@ html,body{margin:0;height:100%;background:#000;color:var(--ink);font-family:"Gow
 <script>
 (() => {
 'use strict';
-const APP_VER = '11월 13일 00:15 수정본';
+const APP_VER = '11월 13일 00:52 수정본';
 const MP_VER = '0.10.14';
 const MP_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VER}`;
 const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
 const TEST = /[?&]test=1/.test(location.search);
 
 const $ = id => document.getElementById(id);
+/* 별자리 30개: 생일 별자리 12 + 유명한 별자리 18. s=[x,y,겉보기등급] (-1~1), l=[별 번호, 별 번호] */
+const CONS = [{"id":"Ari","ko":"양자리","bd":"3/21~4/19","s":[[-1.0,-0.641,3.6],[0.494,0.002,2.0],[0.953,0.406,2.6],[1.0,0.641,3.9]],"l":[[0,1],[1,2],[2,3]]},{"id":"Tau","ko":"황소자리","bd":"4/20~5/20","s":[[-1.0,-0.444,3.0],[-0.082,-0.09,0.9],[0.024,-0.049,3.4],[0.154,-0.033,3.6],[0.108,-0.15,3.8],[0.026,-0.251,3.5],[-0.786,-0.912,1.6],[0.439,0.156,3.4],[0.96,0.311,3.7],[0.409,0.557,3.9],[1.0,0.354,3.6],[0.835,0.912,4.3]],"l":[[0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[3,7],[7,8],[8,9],[8,10],[10,11]]},{"id":"Gem","ko":"쌍둥이자리","bd":"5/21~6/21","s":[[1.0,-0.042,3.3],[0.814,-0.029,2.9],[0.332,-0.26,3.1],[-0.258,-0.752,4.4],[-0.745,-0.937,1.6],[-1.0,-0.573,1.2],[-0.801,-0.447,4.1],[-0.471,0.047,3.5],[-0.112,0.189,4.0],[0.505,0.585,1.9],[0.338,0.937,3.4],[-0.439,0.577,3.6]],"l":[[0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[6,7],[7,8],[8,9],[9,10],[7,11]]},{"id":"Cnc","ko":"게자리","bd":"6/22~7/22","s":[[-0.53,0.727,4.3],[-0.182,0.09,3.9],[-0.148,-0.247,4.7],[-0.223,-1.0,4.0],[0.53,1.0,3.5]],"l":[[0,1],[1,2],[2,3],[1,4]]},{"id":"Leo","ko":"사자자리","bd":"7/23~8/22","s":[[0.676,0.479,1.4],[0.682,0.155,3.5],[0.476,-0.045,2.0],[-0.375,-0.11,2.6],[-1.0,0.253,2.1],[-0.398,0.233,3.3],[0.522,-0.285,3.4],[0.883,-0.479,3.9],[1.0,-0.335,3.0]],"l":[[0,1],[1,2],[2,3],[3,4],[4,5],[0,5],[2,6],[6,7],[7,8]]},{"id":"Vir","ko":"처녀자리","bd":"8/23~9/22","s":[[1.0,-0.302,4.0],[0.94,-0.083,3.6],[0.601,0.025,3.9],[0.363,0.058,2.7],[0.063,0.23,4.4],[-0.097,0.471,1.0],[-0.645,0.258,4.1],[-0.96,0.253,3.9],[0.145,-0.471,2.9],[0.215,-0.147,3.4],[-0.197,0.022,3.4],[-0.486,-0.07,4.2],[-1.0,-0.09,3.7]],"l":[[0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[6,7],[8,9],[3,9],[4,10],[10,11],[11,12]]},{"id":"Lib","ko":"천칭자리","bd":"9/23~10/22","s":[[0.207,0.557,3.2],[0.54,-0.331,2.8],[-0.069,-1.0,2.6],[-0.507,-0.463,3.9],[-0.509,0.836,3.6],[-0.54,1.0,3.7]],"l":[[0,1],[1,2],[2,3],[3,4],[4,5],[1,3]]},{"id":"Sco","ko":"전갈자리","bd":"10/23~11/22","s":[[0.962,-0.432,2.9],[0.971,-0.74,2.3],[0.895,-1.0,2.6],[0.53,-0.511,2.9],[0.368,-0.447,1.1],[0.238,-0.3,2.8],[-0.03,0.209,2.3],[-0.059,0.526,3],[-0.101,0.895,3.6],[-0.375,0.981,3.3],[-0.773,1.0,1.9],[-0.971,0.776,3.0],[-0.898,0.669,2.4],[-0.766,0.486,1.6]],"l":[[0,1],[1,2],[1,3],[3,4],[4,5],[5,6],[6,7],[7,8],[8,9],[9,10],[10,11],[11,12],[12,13]]},{"id":"Sgr","ko":"궁수자리","bd":"11/23~12/21","s":[[0.615,0.478,3.1],[0.536,0.3,1.8],[0.61,-0.012,2.7],[0.527,-0.325,2.8],[0.784,-0.612,3.8],[-0.272,1.0,4.0],[-0.299,0.719,4.0],[-0.013,-0.039,2.6],[0.247,-0.231,3.2],[-0.713,0.854,4.1],[-0.828,0.39,4.4],[-0.838,-0.244,4.7],[-0.544,-0.366,4.6],[-0.366,-0.4,5.0],[-0.212,-0.354,4.9],[0.101,-0.283,2.0],[0.838,0.055,3.0],[-0.078,-0.19,3.3],[-0.044,-0.597,3.8],[-0.126,-0.647,2.9],[-0.257,-0.789,4.9],[-0.326,-0.866,3.9],[-0.332,-1.0,4.5],[0.067,-0.641,3.5],[0.122,-0.527,4.9]],"l":[[0,1],[1,2],[2,3],[3,4],[5,6],[6,7],[7,8],[3,8],[9,10],[10,11],[11,12],[12,13],[13,14],[14,15],[8,15],[2,8],[2,16],[1,16],[1,7],[7,17],[15,17],[15,18],[18,19],[19,20],[20,21],[21,22],[18,23],[23,24],[15,24]]},{"id":"Cap","ko":"염소자리","bd":"12/22~1/19","s":[[1.0,-0.651,4.3],[0.911,-0.443,3.0],[0.721,-0.171,4.8],[0.33,0.501,4.1],[0.209,0.651,4.1],[-0.523,0.246,3.8],[-1.0,-0.31,2.9],[-0.84,-0.269,3.7],[-0.444,-0.268,4.3],[-0.087,-0.238,4.1]],"l":[[0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[6,7],[7,8],[8,9],[0,9]]},{"id":"Aqr","ko":"물병자리","bd":"1/20~2/18","s":[[1.0,0.009,3.8],[0.937,-0.02,4.7],[0.467,-0.199,2.9],[0.078,-0.443,3.0],[-0.101,-0.395,3.9],[-0.183,-0.457,3.6],[-0.256,-0.452,4.0],[-0.447,-0.113,3.7],[-0.734,-0.033,4.4],[-0.621,0.521,3.7],[0.064,0.168,4.3],[-0.048,-0.107,4.2],[-0.142,-0.521,4.8],[-0.775,0.482,4.0],[-1.0,0.393,4.8]],"l":[[0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[6,7],[7,8],[8,9],[2,10],[3,11],[5,12],[8,13],[8,14]]},{"id":"Psc","ko":"물고기자리","bd":"2/19~3/20","s":[[-0.423,-0.379,4.7],[-0.395,-0.638,4.5],[-0.477,-0.509,4.7],[-0.403,-0.217,4.7],[-0.622,0.023,3.6],[-0.788,0.287,4.3],[-1.0,0.568,3.8],[-0.897,0.55,4.6],[-0.751,0.45,4.5],[-0.623,0.425,4.8],[-0.441,0.367,5.2],[-0.325,0.355,4.3],[-0.175,0.37,4.4],[0.35,0.397,4.0],[0.566,0.446,4.1],[0.701,0.408,4.3],[0.794,0.45,5.0],[0.837,0.544,3.7],[0.726,0.638,5.0],[0.549,0.616,4.5],[0.497,0.541,5.0],[1.0,0.516,4.5]],"l":[[0,1],[1,2],[0,2],[0,3],[3,4],[4,5],[5,6],[6,7],[7,8],[8,9],[9,10],[10,11],[11,12],[12,13],[13,14],[14,15],[15,16],[16,17],[17,18],[18,19],[19,20],[14,20],[17,21]]},{"id":"UMa","ko":"큰곰자리","bd":"","s":[[-0.264,-0.428,3.3],[0.149,-0.558,1.8],[0.152,-0.331,2.3],[-0.17,-0.258,2.4],[-0.503,-0.469,1.8],[-0.702,-0.521,2.2],[-1.0,-0.4,1.9],[-0.166,-0.004,3.7],[-0.027,0.651,3.5],[-0.03,0.723,3.8],[0.08,0.16,3],[0.445,0.278,3.1],[0.479,0.214,3.5],[0.592,-0.678,3.6],[0.932,-0.723,3.4],[0.536,-0.482,3.8],[0.574,-0.275,4.5],[0.719,-0.207,3.2],[1.0,-0.136,3.1],[0.983,-0.088,3.6]],"l":[[0,1],[1,2],[2,3],[0,3],[0,4],[4,5],[5,6],[3,7],[7,8],[8,9],[7,10],[10,11],[10,12],[1,13],[13,14],[14,15],[2,15],[2,16],[16,17],[17,18],[17,19]]},{"id":"UMi","ko":"작은곰자리","bd":"","s":[[0.088,0.44,4.3],[-0.033,0.77,5.0],[0.638,1.0,3],[0.687,0.596,2.1],[-0.41,0.056,4.2],[-0.616,-0.496,4.3],[-0.687,-1.0,2.0]],"l":[[0,1],[1,2],[2,3],[0,3],[0,4],[4,5],[5,6]]},{"id":"Cas","ko":"카시오페이아자리","bd":"","s":[[-1.0,-0.609,3.4],[-0.547,0.014,2.7],[0.027,-0.041,2.1],[0.395,0.609,2.2],[1.0,0.105,2.3]],"l":[[0,1],[1,2],[2,3],[3,4]]},{"id":"Ori","ko":"오리온자리","bd":"","s":[[-0.589,-0.636,4.4],[-0.37,-1.0,4.4],[-0.522,-0.998,4.6],[-0.661,-0.602,4.5],[-0.511,-0.294,4.1],[-0.396,-0.144,0.5],[0.089,-0.072,1.6],[0.575,-0.325,4.6],[0.524,0.228,4.5],[0.594,0.18,3.7],[0.641,-0.028,3.7],[0.661,-0.117,3.2],[0.646,-0.244,4.3],[0.547,-0.545,4.1],[0.414,-0.667,4.7],[0.333,-0.678,4.8],[0.266,0.895,0.2],[0.1,0.5,3.4],[-0.023,0.361,2.2],[-0.071,-0.305,3.4],[-0.167,0.47,1.7],[-0.288,1.0,2.1],[-0.092,0.421,1.7]],"l":[[0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[6,7],[8,9],[9,10],[10,11],[11,12],[7,12],[7,13],[13,14],[14,15],[16,17],[17,18],[6,18],[6,19],[5,19],[5,20],[20,21],[20,22],[18,22]]},{"id":"CMa","ko":"큰개자리","bd":"","s":[[0.766,-0.33,2.0],[0.184,-0.482,-1.4],[-0.271,0.291,3.0],[-0.398,0.572,1.8],[-0.233,0.737,3.5],[-0.158,0.85,1.5],[0.753,1.0,3.0],[-0.766,0.909,2.5],[-0.102,-0.446,4.4],[-0.303,-0.6,4.1],[-0.051,-1.0,4.1]],"l":[[0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[3,7],[1,8],[8,9],[9,10],[8,10]]},{"id":"CMi","ko":"작은개자리","bd":"","s":[[-0.984,1.0,0.4],[0.984,-1.0,2.9]],"l":[[0,1]]},{"id":"Cyg","ko":"백조자리","bd":"","s":[[-0.874,0.761,3.2],[-0.381,0.522,2.5],[0.024,0.066,2.2],[0.544,-0.312,2.9],[0.697,-0.846,3.8],[0.831,-1.0,3.8],[-0.219,-0.339,1.2],[0.413,0.464,3.9],[0.874,1.0,3.0]],"l":[[0,1],[1,2],[2,3],[3,4],[4,5],[2,6],[2,7],[7,8]]},{"id":"Lyr","ko":"거문고자리","bd":"","s":[[0.207,-0.417,4.3],[0.223,-1.0,4.6],[0.646,-0.768,0.0],[-0.355,-0.215,4.2],[-0.646,1.0,3.2],[-0.104,0.812,3.5]],"l":[[0,1],[1,2],[0,2],[0,3],[3,4],[4,5],[0,5]]},{"id":"Aql","ko":"독수리자리","bd":"","s":[[-0.196,-0.639,2.7],[-0.314,-0.456,0.8],[-0.434,-0.198,3.7],[-0.863,0.563,3.2],[-0.362,0.369,3.9],[0.344,0.148,3.4],[0.861,-1.0,3.0],[0.863,1.0,3.4]],"l":[[0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[1,6],[1,5],[5,7]]},{"id":"Peg","ko":"페가수스자리","bd":"","s":[[0.579,-0.731,4.3],[0.205,-0.553,2.9],[-0.039,-0.443,2.4],[-0.824,-0.585,2.1],[-1.0,0.183,2.8],[-0.073,0.241,2.5],[0.158,0.406,4.2],[0.226,0.479,3.4],[0.653,0.731,3.5],[1.0,0.513,2.4],[0.121,-0.253,3.5],[0.162,-0.198,4.0],[0.638,-0.307,3.8],[0.913,-0.348,4.1]],"l":[[0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[6,7],[7,8],[8,9],[2,5],[2,10],[10,11],[11,12],[12,13]]},{"id":"And","ko":"안드로메다자리","bd":"","s":[[-1.0,-0.47,2.1],[-0.437,0.036,2.1],[-0.081,0.334,3.3],[0.316,0.432,2.1],[-0.336,0.777,4.4],[-0.197,0.729,4.1],[-0.072,0.426,4.3],[-0.048,0.167,4.3],[0.586,-0.438,4.3],[1.0,-0.47,3.6],[0.552,-0.496,4.2],[0.564,-0.627,3.8],[-0.272,-0.12,3.9],[-0.186,-0.266,4.5],[-0.367,-0.646,4.3],[-0.641,-0.777,3.6],[0.477,-0.611,5.0]],"l":[[0,1],[1,2],[2,3],[4,5],[5,6],[2,6],[2,7],[7,8],[8,9],[8,10],[10,11],[1,12],[12,13],[13,14],[14,15],[10,16]]},{"id":"Per","ko":"페르세우스자리","bd":"","s":[[-0.675,0.965,3.8],[-0.852,0.989,2.8],[-0.901,0.652,4.0],[-0.844,0.306,2.9],[-0.63,0.113,3.8],[-0.57,-0.308,3.0],[-0.48,-0.336,4.3],[-0.315,-0.468,1.8],[-0.074,-0.774,2.9],[0.078,-0.989,3.8],[0.06,-0.723,3.9],[-0.113,-0.451,4.0],[-0.104,-0.064,3.8],[-0.071,0.252,2.1],[-0.115,0.363,4.6],[-0.016,0.423,3.3],[0.081,0.35,4.7],[0.059,0.239,5.9],[-0.865,-0.551,4.2],[-1.0,-0.411,4.1],[-0.923,-0.34,4.0],[0.219,-0.448,4.1],[1.0,-0.755,4.0]],"l":[[0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[6,7],[7,8],[8,9],[9,10],[10,11],[11,12],[12,13],[13,14],[14,15],[15,16],[16,17],[13,17],[18,19],[19,20],[5,20],[11,21],[21,22]]},{"id":"Cep","ko":"케페우스자리","bd":"","s":[[0.688,0.323,4.2],[0.559,0.473,3.4],[0.198,0.479,2.5],[-0.045,0.848,4.2],[-0.428,1.0,4.2],[-0.37,0.898,3.4],[-0.586,0.858,4.1],[-0.677,0.124,3.5],[-0.688,-1.0,3.2],[0.019,-0.229,3.2]],"l":[[0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[6,7],[7,8],[8,9],[2,9],[7,9]]},{"id":"Boo","ko":"목동자리","bd":"","s":[[0.509,0.781,4.5],[0.411,0.735,2.7],[0.148,0.702,-0.1],[-0.045,0.126,3.6],[-0.044,-0.277,3.0],[-0.335,-0.399,3.5],[-0.509,-0.052,3.5],[-0.195,0.29,2.4],[-0.173,1.0,3.8],[0.101,-0.684,4.2],[0.116,-1.0,4.5],[0.019,-1.0,4.0]],"l":[[0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[6,7],[2,7],[2,8],[4,9],[9,10],[10,11],[9,11]]},{"id":"Her","ko":"헤라클레스자리","bd":"","s":[[0.631,0.676,3.7],[0.497,0.534,2.8],[0.31,-0.076,2.8],[0.271,-0.517,3.5],[0.361,-0.74,4.2],[0.501,-1.0,3.9],[0.631,-0.93,4.2],[0.837,-0.808,4.6],[0.067,-0.03,3.9],[-0.112,-0.388,3.2],[-0.612,-0.461,3.9],[-0.215,-0.413,4.2],[-0.136,0.336,3.1],[-0.555,0.134,3.4],[-0.698,0.024,3.7],[-0.837,0.036,3.8],[-0.153,1.0,2.8]],"l":[[0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[6,7],[2,8],[3,9],[10,11],[9,11],[8,9],[8,12],[12,13],[13,14],[14,15],[1,16]]},{"id":"Dra","ko":"용자리","bd":"","s":[[-0.741,0.601,3.7],[-0.853,0.879,2.2],[-0.625,0.885,2.8],[-0.607,0.728,4.9],[-0.948,-0.14,3.1],[-0.629,-0.189,4.2],[-0.363,0.195,3.2],[-0.106,0.425,2.7],[0.057,0.567,4.0],[0.304,0.493,3.3],[0.657,0.005,3.7],[0.811,-0.579,3.9],[1.0,-0.885,3.8],[-0.6,-0.26,3.5],[-1.0,-0.371,3.8]],"l":[[0,1],[1,2],[2,3],[0,3],[0,4],[4,5],[5,6],[6,7],[7,8],[8,9],[9,10],[10,11],[11,12],[5,13],[4,14]]},{"id":"Aur","ko":"마차부자리","bd":"","s":[[-0.427,-0.276,1.9],[0.147,-0.334,0.1],[0.301,0.022,3.2],[0.488,0.628,2.7],[0.017,1.0,1.6],[-0.488,0.31,2.6],[-0.356,-1.0,3.7],[0.353,-0.178,3.0],[0.359,0.03,3.7]],"l":[[0,1],[1,2],[2,3],[3,4],[4,5],[0,5],[0,6],[1,6],[1,7],[7,8]]},{"id":"Cru","ko":"남십자자리","bd":"","s":[[-0.694,-0.116,1.2],[0.694,-0.435,2.8],[0.179,1.0,0.8],[-0.001,-1.0,1.6]],"l":[[0,1],[2,3]]}];
+/* 손 모양 그림 (이모지 대신 직접 그린 선화). handSVG(이름, {size, ink, fill}) → <svg> 문자열 */
+function handSVG(pose, o) {
+  o = Object.assign({ size: 64, ink: '#e9cf8e', fill: '#141a33', star: '#fff4d2' }, o || {});
+  const P = (x, y) => [x, y];
+  // 기본 손 (손바닥이 보이게, 손가락 위로). viewBox 0 0 120 140
+  const W0 = P(60, 132), palm = [P(36, 112), P(34, 74), P(44, 66), P(58, 63), P(72, 65), P(84, 71), P(88, 100), P(78, 122), P(46, 124)];
+  const up = { i: [P(43, 70), P(40, 46), P(38, 26)], m: [P(57, 66), P(57, 40), P(57, 18)], r: [P(71, 68), P(73, 44), P(75, 25)], p: [P(83, 74), P(88, 56), P(92, 42)] };
+  const fold = { i: [P(43, 70), P(42, 60)], m: [P(57, 66), P(57, 56)], r: [P(71, 68), P(72, 58)], p: [P(83, 74), P(85, 66)] };
+  const thumbIn = [P(38, 108), P(42, 92), P(56, 86)];
+  const thumbOut = [P(40, 112), P(26, 94), P(14, 80), P(6, 68)];
+  const thumbSide = [P(40, 112), P(27, 96), P(22, 82)];
+  let F = [], extra = '', W = 120, H = 140, palmPts = palm, tx = 0;
+  const finger = (k, s) => F.push({ pts: s === 'up' ? up[k] : fold[k], w: k === 'p' ? 11 : 13 });
+  const thumb = pts => F.push({ pts, w: 14 });
+  const spark = (x, y, r) => `<path d="M${x} ${y - r}Q${x} ${y} ${x + r} ${y}Q${x} ${y} ${x} ${y + r}Q${x} ${y} ${x - r} ${y}Q${x} ${y} ${x} ${y - r}Z" fill="${o.star}"/>`;
+  const arrowHead = (x, y, ang) => { const a = ang, l = 7; return `<path d="M${x} ${y}L${x - l * Math.cos(a - 0.5)} ${y - l * Math.sin(a - 0.5)}M${x} ${y}L${x - l * Math.cos(a + 0.5)} ${y - l * Math.sin(a + 0.5)}" stroke="${o.ink}" stroke-width="3" stroke-linecap="round" fill="none"/>`; };
+  switch (pose) {
+    case 'point': finger('i', 'up'); finger('m', 'f'); finger('r', 'f'); finger('p', 'f'); F.push({ pts: thumbIn, w: 13, top: 1 }); extra = spark(38, 14, 7); break;
+    case 'pinch': case 'drag': {
+      F.push({ pts: [P(43, 70), P(30, 46), P(16, 42)], w: 13 }); finger('m', 'f'); finger('r', 'f'); finger('p', 'f');
+      thumb([P(40, 112), P(22, 98), P(9, 76), P(9, 54)]);
+      extra = spark(10, 34, 8);
+      if (pose === 'drag') extra += `<g transform="translate(104 34)" stroke="${o.ink}" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M-14 0H14M0 -14V14M-9 -5L-14 0L-9 5M9 -5L14 0L9 5M-5 -9L0 -14L5 -9M-5 9L0 14L5 9"/></g>`;
+      break;
+    }
+    case 'turn': {
+      finger('i', 'up'); finger('m', 'f'); finger('r', 'f'); finger('p', 'f'); thumb(thumbOut);
+      extra = `<path d="M18 28 A44 44 0 0 1 86 14" stroke="${o.ink}" stroke-width="3" fill="none" stroke-linecap="round"/>` + arrowHead(86, 14, 0.25);
+      break;
+    }
+    case 'dwell': finger('i', 'up'); finger('m', 'f'); finger('r', 'f'); finger('p', 'f'); F.push({ pts: thumbIn, w: 13, top: 1 });
+      extra = `<circle cx="38" cy="14" r="11" stroke="#bcd0ff" stroke-width="2.5" fill="none" stroke-dasharray="52 18" transform="rotate(-90 38 14)"/>` + spark(38, 14, 5);
+      break;
+    case 'palm': case 'swipe': case 'palmArrow':
+      finger('i', 'up'); finger('m', 'up'); finger('r', 'up'); finger('p', 'up'); thumb(thumbOut);
+      if (pose === 'palm') extra = `<g fill="#dfe6f5" opacity=".35"><circle cx="30" cy="24" r="10"/><circle cx="96" cy="30" r="12"/><circle cx="104" cy="70" r="8"/></g>`;
+      if (pose === 'swipe') { W = 150; tx = 30; extra = `<g stroke="${o.ink}" stroke-width="3" stroke-linecap="round"><path d="M-22 40H-2M-28 60H-6M-22 80H-2"/></g>` + spark(-22, 22, 7) + `<path d="M-30 30L-14 18" stroke="${o.star}" stroke-width="2" stroke-linecap="round" opacity=".7"/>`; }
+      if (pose === 'palmArrow') { H = 160; extra = `<g transform="translate(60 150)"><circle r="14" fill="none" stroke="${o.ink}" stroke-width="2.5"/><path d="M4 -7L-5 0L4 7" fill="none" stroke="${o.ink}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></g>`; }
+      break;
+    case 'fist': finger('i', 'f'); finger('m', 'f'); finger('r', 'f'); finger('p', 'f'); F.push({ pts: [P(36, 104), P(42, 88), P(64, 82)], w: 13, top: 1 }); break;
+    case 'two': { // 두 손 집기
+      const L = handSVG('pinch', Object.assign({}, o, { raw: true })), R = L;
+      const s = o.size / 140;
+      return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 140" width="${o.size * 300 / 140}" height="${o.size}" aria-hidden="true">`
+        + `<g transform="translate(128 0) scale(-1 1)">${L}</g><g transform="translate(172 0)">${R}</g>`
+        + `<g stroke="${o.ink}" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M132 92H168M138 86L132 92L138 98M162 86L168 92L162 98"/></g></svg>`;
+    }
+  }
+  const pl = pts => pts.map((p, i) => (i ? 'L' : 'M') + p[0] + ' ' + p[1]).join('');
+  const palmD = pl(palmPts) + 'Z';
+  const ow = 3.2;
+  let g = '';
+  g += `<path d="${palmD}" fill="${o.ink}" stroke="${o.ink}" stroke-width="${ow * 2}" stroke-linejoin="round"/>`;
+  const base = F.filter(f => !f.top), tops = F.filter(f => f.top);
+  base.forEach(f => { g += `<path d="${pl(f.pts)}" stroke="${o.ink}" stroke-width="${f.w + ow * 2}" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`; });
+  g += `<path d="${palmD}" fill="${o.fill}" stroke="${o.fill}" stroke-width="0.5" stroke-linejoin="round"/>`;
+  base.forEach(f => { g += `<path d="${pl(f.pts)}" stroke="${o.fill}" stroke-width="${f.w}" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`; });
+  tops.forEach(f => { g += `<path d="${pl(f.pts)}" stroke="${o.ink}" stroke-width="${f.w + ow * 2}" fill="none" stroke-linecap="round" stroke-linejoin="round"/><path d="${pl(f.pts)}" stroke="${o.fill}" stroke-width="${f.w}" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`; });
+  // 접힌 손가락 마디 선
+  if (pose === 'fist' || pose === 'point' || pose === 'pinch' || pose === 'drag' || pose === 'turn' || pose === 'dwell') {
+    g += `<g stroke="${o.ink}" stroke-width="2" stroke-linecap="round" opacity=".7">`;
+    if (pose === 'fist') g += '<path d="M50 60V72M64 60V73M78 64V75"/>';
+    else g += '<path d="M64 60V72M78 64V75"/>';
+    g += '</g>';
+  }
+  const body = `<g transform="translate(${tx} 0)">${g}${extra}</g>`;
+  if (o.raw) return body;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${-0} 0 ${W} ${H}" width="${o.size * W / 140}" height="${o.size * H / 140}" aria-hidden="true" overflow="visible">${body}</svg>`;
+}
+
 $('ver').textContent = APP_VER; $('ver2').textContent = APP_VER;
-const GUIDE = [['☝️', '검지 하나', '별 가리키기'], ['🤏', '집었다 놓기', '별 만들기'], ['🤏', '별을 집은 채 움직이기', '옮기기'], ['✌️', '브이 + 위아래', '밝기'], ['🤟', '세 손가락으로 별 지나가기', '별자리 잇기'], ['🖐️', '손바닥 펴고 문지르기', '지우기'], ['✊', '주먹', '쉬기']];
-const gl = GUIDE.map(([i, a, b]) => `<li><i>${i}</i>${a} <small>· ${b}</small></li>`).join('');
+const T = '\u{1F3FB}'; // 밝은 피부색
+const GUIDE = [['☝' + T, '검지 하나', '별 고르기'], ['🤏' + T, '집었다 놓기', '별 만들기'], ['🤏' + T + '<b>↔</b>', '별을 집고 움직이기', '별 옮기기'], ['👆' + T + '<b>↻</b>', '엄지·검지 브이 돌리기', '시계 방향 밝게, 반대 어둡게'], ['☝' + T + '<b>⋯</b>', '별마다 잠깐 머물기', '별자리 잇기'], ['🖐' + T, '손바닥으로 문지르기', '별 지우기'], ['✊' + T, '주먹', '멈추기'], ['<span class="diag"><em class="rot a">🤏' + T + '</em><b>⤢</b><em class="rot c">🤏' + T + '</em></span>', '두 손으로 집고 벌리기', '별 전체 크게·작게'], ['👋' + T, '빠르게 휘두르기', '별똥별'], ['✋' + T + '<b>‹›</b>', '화살표에 손바닥', '다른 별자리로']];
+const emo = h => h.includes('diag') ? h : h.replace(/(🤏\u{1F3FB})/gu, '<em class="rot">$1</em>');
+const gl = GUIDE.map(([i, a, b]) => `<li><i class="emo">${emo(i)}</i><span>${a} <small>· ${b}</small></span></li>`).join('');
 $('guide1').innerHTML = gl; $('guide2').innerHTML = gl;
 
 /* ---------- 화면 ---------- */
@@ -106,7 +201,7 @@ addEventListener('resize', resize); resize();
 const U = () => Math.min(W, H);
 
 /* ---------- 설정 (카메라 밝기·투명도·반전) ---------- */
-const st = { mirror: true, camB: 50, camA: 100 };
+const st = { mirror: true, camB: 50, camA: 100, trace: false, ci: 15 };
 try { Object.assign(st, JSON.parse(localStorage.getItem('starhand-set2') || '{}')); } catch (e) {}
 const saveSet = () => { try { localStorage.setItem('starhand-set2', JSON.stringify(st)); } catch (e) {} };
 function applySet() {
@@ -115,6 +210,7 @@ function applySet() {
   document.documentElement.style.setProperty('--camA', st.camA / 100);
   $('sB').value = st.camB; $('sA').value = st.camA;
   $('vB').textContent = st.camB + '%'; $('vA').textContent = (100 - st.camA) + '%';
+  $('bTrace').textContent = st.trace ? '별자리 따라 그리기 끄기' : '별자리 따라 그리기 켜기'; $('bTrace').classList.toggle('on', st.trace);
 }
 $('sB').oninput = e => { st.camB = +e.target.value; applySet(); saveSet(); };
 $('sA').oninput = e => { st.camA = +e.target.value; applySet(); saveSet(); };
@@ -127,8 +223,8 @@ function toast(t) { const e = $('toast'); e.textContent = t; e.classList.add('sh
 /* ---------- 별 + 별자리 선 ---------- */
 let stars = [], links = [], nextId = 1;
 const MIN_GAP = () => U() * 0.03;
-function addStar(x, y, b = 0.6) {
-  if (stars.some(s => !s.dying && Math.hypot(s.x - x, s.y - y) < MIN_GAP())) return null;
+function addStar(x, y, b = 0.6, force) {
+  if (!force && stars.some(s => !s.dying && Math.hypot(s.x - x, s.y - y) < MIN_GAP())) return null;
   const s = { id: nextId++, x, y, b, born: performance.now(), ph: Math.random() * 6.28, sp: 1.5 + Math.random() * 2, dying: 0 };
   stars.push(s); return s;
 }
@@ -144,6 +240,8 @@ function link(a, b) {
   if (links.some(l => (l.a === a.id && l.b === b.id) || (l.a === b.id && l.b === a.id))) return;
   links.push({ a: a.id, b: b.id, born: performance.now() });
 }
+const hasLink = (a, b) => links.some(l => (l.a === a.id && l.b === b.id) || (l.a === b.id && l.b === a.id));
+const bFromMag = m => Math.max(0.1, Math.min(1, 1 - (m - 0.5) / 5.5));
 const mag = b => Math.max(1, Math.min(6, Math.round(1 + (1 - b) * 5)));
 
 function drawStar(s, t, hi) {
@@ -191,19 +289,19 @@ function drawLinks(t) {
 const d2 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 function classify(lm) {
   const size = d2(lm[0], lm[9]) || 1e-6;
-  const pinchR = d2(lm[4], lm[8]) / size;
+  const pinchR = d2(lm[4], lm[8]) / size;            // 엄지 끝 ~ 검지 끝 (손 크기 기준)
+  const thumbOut = d2(lm[4], lm[10]) / size > 0.55;   // 엄지가 중지 옆에서 떨어져 있으면 = 엄지를 편 것
+  const idxBent = d2(lm[0], lm[8]) < d2(lm[0], lm[6]) * 0.95; // 검지가 손바닥 쪽으로 말림 = 주먹
   const ext = [[8, 6], [12, 10], [16, 14], [20, 18]].map(([tip, pip]) => d2(lm[0], lm[tip]) > d2(lm[0], lm[pip]) * 1.12);
-  return { size, pinchR, ext };
+  return { size, pinchR, thumbOut, idxBent, ext };
 }
-const hand = { cand: 'none', candN: 0, g: 'none', pinching: false, x: 0, y: 0, sizePx: 0, seen: 0, palmT: 0, pts: null, mode: 'cam' };
+const hand = { cand: 'none', candN: 0, g: 'none', pinching: false, x: 0, y: 0, sizePx: 0, seen: 0, palmT: 0, pts: null, mode: 'cam', exitN: 0 };
 function rawGesture(f) {
-  if (hand.pinching ? f.pinchR < 0.45 : f.pinchR < 0.30) return 'pinch';
   const [i, m, r, p] = f.ext;
+  if (!f.idxBent && (hand.pinching ? f.pinchR < 0.45 : f.pinchR < 0.30)) return 'pinch'; // 주먹은 집기로 보지 않음
   if (i && m && r && p) return 'palm';
-  if (i && m && r && !p) return 'three';
-  if (i && m && !r && !p) return 'vee';
-  if (i && !m && !r && !p) return 'point';
-  if (!i && !m && !r && !p) return 'fist';
+  if (i && !m && !r && !p) return f.thumbOut ? 'ell' : 'point';   // 엄지·검지 브이(L자) / 검지 하나
+  if (!i && !m && !r && !p) return 'fist';                         // 주먹 = 정지
   return 'other';
 }
 function toScreen(pt) {
@@ -214,26 +312,47 @@ function toScreen(pt) {
 }
 
 /* ---------- 손동작 → 별 ---------- */
-let drag = null, pend = null, vee = null, hover = null, chain = null, lastSeen = 0;
+let drag = null, pend = null, ell = null, bm = null, hover = null, chain = null, dwell = null, lastSeen = 0;
 const trail = [];
-const NEED = { pinch: 2, point: 3, vee: 4, three: 4, palm: 4, fist: 4, other: 6 };
+const NEED = { pinch: 2, point: 3, ell: 3, palm: 4, fist: 3, other: 5 };
+const LINK_WAIT = 500;  // 검지로 별 위에 이만큼 머물면 선 시작·잇기
+const LINK_IDLE = 6000; // 이만큼 아무 별도 잇지 않으면 점선이 사라짐
+const BR_WAIT = 300;   // 고른 별 옆에서 엄지·검지 브이를 이만큼 유지하면 밝기 모드
+const TURN = Math.PI * 2 / 3;   // 120° 돌리면 가장 어두움 → 가장 밝음
+function cursorOf(g, lm) {
+  if (g === 'pinch') return { x: (lm[4].x + lm[8].x) / 2, y: (lm[4].y + lm[8].y) / 2 };
+  if (g === 'fist') return { x: (lm[5].x + lm[9].x) / 2, y: (lm[5].y + lm[9].y) / 2 };
+  if (g === 'palm') return { x: (lm[0].x + lm[5].x + lm[9].x + lm[13].x + lm[17].x) / 5, y: (lm[0].y + lm[5].y + lm[9].y + lm[13].y + lm[17].y) / 5 };
+  return lm[8];
+}
 function onHand(lm, t) {
   lastSeen = t;
   hand.pts = lm.map(toScreen);
   const f = classify(lm);
   const r = rawGesture(f);
+
+  // 밝기 모드: 엄지·검지 브이를 시계 방향으로 돌리면 밝게, 반시계 방향이면 어둡게
+  if (bm) {
+    hand.g = 'bright'; hand.pinching = false;
+    const ip = toScreen(lm[8]); hand.x = ip.x; hand.y = ip.y; hand.seen = t;
+    hand.sizePx = f.size * ip.sc;
+    if (bm.s.dying) { endBright(); return; }
+    let d = vAngle() - bm.ang;
+    if (d > Math.PI) d -= 2 * Math.PI; if (d < -Math.PI) d += 2 * Math.PI;
+    bm.ang += d * 0.6; // 떨림을 줄이려고 조금씩 따라감
+    if (Math.abs(d) > 0.01) bm.s.b = Math.max(0.08, Math.min(1, bm.s.b + (d * 0.6) / TURN));
+    hover = bm.s;
+    hand.exitN = r === 'ell' ? 0 : hand.exitN + (r === 'other' ? 0.5 : r === 'point' ? 0.34 : 1); // 돌리는 중 잠깐 흐트러져도 유지
+    if (hand.exitN >= 5) { endBright(); hand.cand = r; hand.candN = 5; }
+    return;
+  }
+
   hand.pinching = r === 'pinch';
   if (r === hand.cand) hand.candN++; else { hand.cand = r; hand.candN = 1; }
   const prevG = hand.g;
-  if (hand.cand !== hand.g && hand.candN >= (NEED[hand.cand] || 4) && hand.cand !== 'other') hand.g = hand.cand;
+  if (hand.cand !== hand.g && hand.candN >= (NEED[hand.cand] || 4)) hand.g = hand.cand;
   const g = hand.g;
-  let p;
-  if (g === 'pinch') p = { x: (lm[4].x + lm[8].x) / 2, y: (lm[4].y + lm[8].y) / 2 };
-  else if (g === 'vee') p = { x: (lm[8].x + lm[12].x) / 2, y: (lm[8].y + lm[12].y) / 2 };
-  else if (g === 'three') p = lm[12];
-  else if (g === 'palm' || g === 'fist') p = { x: (lm[0].x + lm[5].x + lm[9].x + lm[13].x + lm[17].x) / 5, y: (lm[0].y + lm[5].y + lm[9].y + lm[13].y + lm[17].y) / 5 };
-  else p = lm[8];
-  const sp = toScreen(p);
+  const sp = toScreen(cursorOf(g, lm));
   hand.sizePx = f.size * sp.sc;
   if (r !== g && prevG === g && g !== 'none') { hand.seen = t; return; } // 손 모양이 바뀌는 중 = 무시
   const jump = Math.hypot(sp.x - hand.x, sp.y - hand.y);
@@ -242,50 +361,62 @@ function onHand(lm, t) {
   hand.seen = t;
   trail.push({ x: hand.x, y: hand.y, t }); while (trail.length > 14) trail.shift();
   if (prevG !== g) gestureEnd(prevG, t), gestureStart(g, t);
-  gestureMove(g, t);
+  gestureMove(g, t, f);
 }
+function vAngle() { const a = hand.pts[4], b = hand.pts[8]; return Math.atan2(b.y - a.y, b.x - a.x); } // 화면에서 엄지→검지 방향
+function endBright() { bm = null; hand.g = 'none'; hand.exitN = 0; }
 function gestureStart(g, t) {
   if (g === 'pinch') {
     const s = nearest(hand.x, hand.y, U() * 0.07);
     if (s) { drag = { s, dx: s.x - hand.x, dy: s.y - hand.y }; hover = s; }
-    else pend = { x: hand.x, y: hand.y, t, moved: 0 };
+    else pend = { x: hand.x, y: hand.y, t, moved: 0, no: t < twoEndT + 700 };
   }
-  if (g === 'vee') {
-    const s = nearest(hand.x, hand.y, U() * 0.1) || ((hover && !hover.dying && Math.hypot(hover.x - hand.x, hover.y - hand.y) < U() * 0.2) ? hover : null);
-    vee = s ? { s, y0: hand.y, b0: s.b } : { s: null };
-  }
-  if (g === 'three') chain = { last: nearest(hand.x, hand.y, U() * 0.06) };
+  if (g === 'ell') ell = { s: null, t };
+  if (g === 'point') dwell = { s: null, t };
   if (g === 'palm') hand.palmT = t;
 }
 function gestureEnd(g) {
   if (g === 'pinch') {
-    if (pend && pend.moved < U() * 0.05) { const s = addStar(pend.x, pend.y); if (s) hover = s; }
+    if (pend && pend.moved < U() * 0.05 && !pend.no) { const s = placeStar(pend.x, pend.y); if (s) hover = s; }
     pend = null; drag = null;
   }
-  if (g === 'vee') vee = null;
-  if (g === 'three') chain = null;
+  if (g === 'ell') ell = null;
+  if (g === 'point') { chain = null; dwell = null; }
 }
-function gestureMove(g, t) {
-  if (g === 'point') {
+function gestureMove(g, t, f) {
+  if (g === 'point' || g === 'ell') {
     hover = nearest(hand.x, hand.y, U() * 0.07) || (hover && !hover.dying ? hover : null);
     if (hover && Math.hypot(hover.x - hand.x, hover.y - hand.y) > U() * 0.2) hover = null;
+  }
+  if (g === 'ell' && ell) { // 고른 별 옆에서 엄지·검지 브이 → 밝기 모드
+    const s = nearest(hand.x, hand.y, U() * 0.08) || (hover && !hover.dying && Math.hypot(hover.x - hand.x, hover.y - hand.y) < U() * 0.25 ? hover : null);
+    if (s !== ell.s) { ell.s = s; ell.t = t; }
+    if (s && t - ell.t > BR_WAIT) { bm = { s, ang: vAngle() }; ell = null; hand.g = 'bright'; }
   }
   if (g === 'pinch') {
     if (drag) { drag.s.x = hand.x + drag.dx; drag.s.y = hand.y + drag.dy; }
     else if (pend) pend.moved = Math.max(pend.moved, Math.hypot(hand.x - pend.x, hand.y - pend.y));
   }
-  if (g === 'vee' && vee && vee.s) { vee.s.b = Math.max(0.08, Math.min(1, vee.b0 + (vee.y0 - hand.y) / (U() * 0.35))); hover = vee.s; }
-  if (g === 'three' && chain) {
+  if (g === 'point' && dwell) { // 검지로 점 잇기: 별 위에 0.5초 머물면 시작, 다음 별에 머물면 이어짐
     const s = nearest(hand.x, hand.y, U() * 0.055);
-    if (s && s !== chain.last) { if (chain.last && !chain.last.dying) link(chain.last, s); chain.last = s; }
-    if (chain.last && chain.last.dying) chain.last = null;
+    if (s !== dwell.s) { dwell.s = s; dwell.t = t; dwell.done = false; }
+    if (s && !dwell.done && t - dwell.t > LINK_WAIT) {
+      dwell.done = true;
+      if (!chain || !chain.last || chain.last.dying) chain = { last: s, t };          // 선 시작
+      else if (s === chain.last) chain = null;                                     // 같은 별에 다시 머물면 멈춤
+      else { link(chain.last, s); chain = { last: s, t }; }                        // 이어 붙이기
+    }
+    if (chain && (t - chain.t > LINK_IDLE || (chain.last && chain.last.dying))) chain = null;
   }
-  if (g === 'palm' && t - hand.palmT > 400) {
+  if (g === 'palm' && palmArrow(t)) return;
+  if (g === 'palm' && t - hand.palmT > 400 && t > noEraseUntil) {
     const R = fogR();
     for (const s of stars) if (!s.dying && Math.hypot(s.x - hand.x, s.y - hand.y) < R * 0.8) killStar(s);
   }
 }
 function lostHand(t) {
+  if (two) endTwo(t);
+  if (bm) endBright();
   if (hand.g !== 'none') { gestureEnd(hand.g, t); hand.g = 'none'; hand.cand = 'none'; hand.candN = 0; hand.pinching = false; }
   hand.pts = null; trail.length = 0;
 }
@@ -317,7 +448,7 @@ function drawHand(t) {
     ctx.beginPath(); ctx.arc(P[i].x, P[i].y, tip ? 2.2 : 1.5, 0, 6.283); ctx.fill();
   }
   ctx.restore();
-  if (g === 'none') return;
+  if (g === 'none' || g === 'other') return;
   const x = hand.x, y = hand.y, tw = 0.85 + 0.15 * Math.sin(t / 140);
   if (g === 'palm') { // 안개 지우개
     const on = t - hand.palmT > 400, R = fogR();
@@ -332,39 +463,50 @@ function drawHand(t) {
     ctx.restore();
     return;
   }
+  if (g === 'bright') { // 엄지·검지 끝에 작은 별빛 두 개 + 사이의 가는 빛
+    const a = P[4], b = P[8];
+    ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.strokeStyle = 'rgba(255,236,190,.28)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); ctx.restore();
+    sparkle(a.x, a.y, 4 * tw, 0.8); sparkle(b.x, b.y, 4 * tw, 0.8);
+    return;
+  }
   // 움직인 자리에 남는 별가루
   ctx.save(); ctx.globalCompositeOperation = 'lighter';
   trail.forEach((p, i) => { const k = i / trail.length; ctx.fillStyle = `rgba(255,240,205,${0.22 * k})`; ctx.beginPath(); ctx.arc(p.x, p.y, 1 + 2 * k, 0, 6.283); ctx.fill(); });
   ctx.restore();
-  if (g === 'fist') { sparkle(x, y, 3, 0.35); return; }
-  if (g === 'three') {
-    sparkle(x, y, 6 * tw, 1, '190,210,255');
-    if (chain && chain.last && !chain.last.dying) { // 이어지는 중인 선
-      ctx.save(); ctx.strokeStyle = 'rgba(200,215,255,.45)'; ctx.lineWidth = 1.2; ctx.setLineDash([3, 6]);
-      ctx.beginPath(); ctx.moveTo(chain.last.x, chain.last.y); ctx.lineTo(x, y); ctx.stroke(); ctx.restore();
-    }
-    return;
+  if (g === 'fist') { sparkle(x, y, 3, 0.3); return; } // 정지: 아주 흐린 점 하나
+  if (g === 'point' && chain && chain.last && !chain.last.dying) { // 이어지는 중인 점선 (손끝까지)
+    const fade = Math.max(0, 1 - Math.max(0, t - chain.t - LINK_IDLE + 1500) / 1500);
+    ctx.save(); ctx.strokeStyle = `rgba(200,215,255,${0.5 * fade})`; ctx.lineWidth = 1.2; ctx.setLineDash([3, 6]);
+    ctx.beginPath(); ctx.moveTo(chain.last.x, chain.last.y); ctx.lineTo(x, y); ctx.stroke(); ctx.restore();
+  }
+  if (g === 'point' && dwell && dwell.s && !dwell.done) { // 머무는 동안 푸른 빛 고리가 차오름
+    const k = Math.min(1, (t - dwell.t) / LINK_WAIT), s = dwell.s, rr = U() * 0.03;
+    if (k > 0.15) { ctx.save(); ctx.strokeStyle = `rgba(190,210,255,${0.55 * k})`; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(s.x, s.y, rr, -Math.PI / 2, -Math.PI / 2 + 6.283 * k); ctx.stroke(); ctx.restore(); }
   }
   sparkle(x, y, (g === 'pinch' ? 5 : 7) * tw, 1);
+  if (g === 'ell' && ell && ell.s) { // 별 위에 머무는 동안 빛 고리가 차오름
+    const k = Math.min(1, (t - ell.t) / BR_WAIT), s = ell.s, rr = U() * 0.035;
+    ctx.save(); ctx.strokeStyle = `rgba(233,207,142,${0.5 * k})`; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(s.x, s.y, rr, -Math.PI / 2, -Math.PI / 2 + 6.283 * k); ctx.stroke(); ctx.restore();
+  }
   if (g === 'pinch' && pend) { const k = Math.min(1, (t - pend.t) / 250); sparkle(pend.x, pend.y, 3 + 3 * k, 0.6 * k); }
 }
-function drawBright() {
-  if (!(hand.g === 'vee' && vee && vee.s)) return;
-  const s = vee.s, h = U() * 0.22, x = s.x + U() * 0.07, y0 = s.y - h / 2;
-  ctx.save();
-  ctx.fillStyle = 'rgba(255,255,255,.08)'; ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x - 3, y0, 6, h, 3) : ctx.rect(x - 3, y0, 6, h); ctx.fill();
-  const fh = h * s.b; ctx.fillStyle = 'rgba(233,207,142,.85)';
-  ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x - 3, y0 + h - fh, 6, fh, 3) : ctx.rect(x - 3, y0 + h - fh, 6, fh); ctx.fill();
-  ctx.font = '700 17px "Gowun Batang", serif'; ctx.textAlign = 'left'; ctx.fillStyle = 'rgba(255,255,255,.9)';
-  ctx.fillText(mag(s.b) + '등급', x + 12, s.y + 6);
-  ctx.restore();
+function drawBright() { // 막대 없이 등급 숫자만 살짝
+  if (!(hand.g === 'bright' && bm)) return;
+  const s = bm.s;
+  ctx.save(); ctx.font = '700 17px "Gowun Batang", serif'; ctx.textAlign = 'left'; ctx.fillStyle = 'rgba(255,255,255,.75)';
+  ctx.fillText(mag(s.b) + '등급', s.x + U() * 0.045, s.y + 6); ctx.restore();
 }
 function frame(t) {
   ctx.clearRect(0, 0, W, H);
   stars = stars.filter(s => !s.dying || t - s.dying < 470);
+  if (!capturing) drawTemplate(t);
   drawLinks(t);
-  for (const s of stars) drawStar(s, t, s === hover && hand.g !== 'none' && hand.g !== 'palm');
-  if (t - lastSeen < 400) { drawHand(t); drawBright(); }
+  for (const s of stars) drawStar(s, t, !capturing && s === hover && hand.g !== 'none' && hand.g !== 'palm' && hand.g !== 'other');
+  drawMeteors(t); drawBits(t);
+  if (!capturing && t - lastSeen < 400) { drawHand(t); drawSecond(t); drawBright(); drawTwo(t); }
 }
 
 /* ---------- 카메라 + 손 인식 ---------- */
@@ -377,7 +519,7 @@ async function startCamera() {
   $('msg').textContent = '손 인식 준비 중… (처음 한 번은 조금 걸려요)';
   const vision = await import(`${MP_URL}/vision_bundle.mjs`);
   const fileset = await vision.FilesetResolver.forVisionTasks(`${MP_URL}/wasm`);
-  const opts = d => ({ baseOptions: { modelAssetPath: MODEL_URL, delegate: d }, runningMode: 'VIDEO', numHands: 1, minHandDetectionConfidence: 0.6, minHandPresenceConfidence: 0.6, minTrackingConfidence: 0.5 });
+  const opts = d => ({ baseOptions: { modelAssetPath: MODEL_URL, delegate: d }, runningMode: 'VIDEO', numHands: 2, minHandDetectionConfidence: 0.6, minHandPresenceConfidence: 0.6, minTrackingConfidence: 0.5 });
   try { landmarker = await vision.HandLandmarker.createFromOptions(fileset, opts('GPU')); }
   catch (e) { landmarker = await vision.HandLandmarker.createFromOptions(fileset, opts('CPU')); }
 }
@@ -385,20 +527,178 @@ function detect(t) {
   if (!landmarker || video.readyState < 2 || video.currentTime === lastVT) return;
   lastVT = video.currentTime;
   const res = landmarker.detectForVideo(video, t);
-  if (res && res.landmarks && res.landmarks.length) onHand(res.landmarks[0], t);
-  else if (t - lastSeen > 250) lostHand(t);
+  if (res && res.landmarks && res.landmarks.length) onHands(res.landmarks, t);
+  else if (t - lastSeen > 250) { lostHand(t); secPts = null; }
 }
 function loop(t) {
   try { detect(t); } catch (e) { console.warn(e); }
-  if (TEST && window.__hand !== undefined) { const h = window.__hand; window.__hand = undefined; if (h) onHand(h, t); else lostHand(t); }
+  if (TEST && window.__hand !== undefined) { const h = window.__hand; window.__hand = undefined; if (h) onHands(Array.isArray(h[0]) ? h : [h], t); else { lostHand(t); secPts = null; } }
   frame(t);
   requestAnimationFrame(loop);
+}
+
+/* ---------- 두 손: 둘 다 집으면 별 전체를 크게·작게 ---------- */
+let secPts = null, two = null, twoN = 0, twoOff = 0, twoEndT = -1e9, capturing = false;
+const pinchKeep = f => !f.idxBent && f.pinchR < 0.5, pinchStart = f => !f.idxBent && f.pinchR < 0.33;
+const pinchPt = P => ({ x: (P[4].x + P[8].x) / 2, y: (P[4].y + P[8].y) / 2 });
+function onHands(arr, t) {
+  if (arr.length < 2) { if (two) endTwo(t); secPts = null; swipeCheck(arr[0].map(toScreen), 'a', t); onHand(arr[0], t); return; }
+  const tips = arr.map(lm => toScreen(lm[8]));
+  let pi = 0;
+  if (t - hand.seen < 600) pi = Math.hypot(tips[0].x - hand.x, tips[0].y - hand.y) <= Math.hypot(tips[1].x - hand.x, tips[1].y - hand.y) ? 0 : 1;
+  const A = arr[pi], B = arr[1 - pi], fa = classify(A), fb = classify(B);
+  const PA = A.map(toScreen), PB = B.map(toScreen);
+  secPts = PB;
+  swipeCheck(PA, 'a', t); swipeCheck(PB, 'b', t);
+  if (two) {
+    twoOff = pinchKeep(fa) && pinchKeep(fb) ? 0 : twoOff + 1;
+    if (twoOff >= 4) { endTwo(t); onHand(A, t); return; }
+    lastSeen = t; hand.seen = t; hand.pts = PA;
+    const a = pinchPt(PA), b = pinchPt(PB), d = Math.max(10, Math.hypot(a.x - b.x, a.y - b.y)), m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    const k = Math.max(0.25, Math.min(4, d / two.d0));
+    two.k = k; two.a = a; two.b = b;
+    for (const o of two.snap) { if (o.s.dying) continue; o.s.x = m.x + (o.x - two.m0.x) * k; o.s.y = m.y + (o.y - two.m0.y) * k; }
+    return;
+  }
+  twoN = pinchStart(fa) && pinchStart(fb) ? twoN + 1 : 0;
+  if (twoN >= 3) { // 두 손 모드 시작: 한 손으로 하던 일은 취소(별이 생기지 않게)
+    pend = null; drag = null; if (bm) endBright(); chain = null; ell = null; dwell = null;
+    const a = pinchPt(PA), b = pinchPt(PB);
+    two = { d0: Math.max(10, Math.hypot(a.x - b.x, a.y - b.y)), m0: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, snap: stars.filter(s => !s.dying).map(s => ({ s, x: s.x, y: s.y })), a, b, k: 1 };
+    hand.g = 'two'; hand.pts = PA; lastSeen = t; twoOff = 0;
+    return;
+  }
+  onHand(A, t);
+}
+function endTwo(t) { two = null; twoN = 0; twoEndT = t; hand.g = 'none'; hand.cand = 'none'; hand.candN = 0; pend = null; }
+function drawSecond() { // 두 번째 손의 마디도 흐린 별가루로
+  const P = secPts; if (!P) return;
+  ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.strokeStyle = 'rgba(200,215,255,.08)'; ctx.lineWidth = 1;
+  ctx.beginPath(); for (const [a, b] of BONES) { ctx.moveTo(P[a].x, P[a].y); ctx.lineTo(P[b].x, P[b].y); } ctx.stroke();
+  for (let i = 0; i < 21; i++) { ctx.fillStyle = 'rgba(230,236,255,.14)'; ctx.beginPath(); ctx.arc(P[i].x, P[i].y, 1.5, 0, 6.283); ctx.fill(); }
+  ctx.restore();
+}
+function drawTwo(t) {
+  if (!two || !two.a) return;
+  const tw = 0.85 + 0.15 * Math.sin(t / 140);
+  ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.strokeStyle = 'rgba(255,236,190,.22)'; ctx.lineWidth = 1; ctx.setLineDash([2, 6]);
+  ctx.beginPath(); ctx.moveTo(two.a.x, two.a.y); ctx.lineTo(two.b.x, two.b.y); ctx.stroke(); ctx.restore();
+  sparkle(two.a.x, two.a.y, 6 * tw, 1); sparkle(two.b.x, two.b.y, 6 * tw, 1);
+}
+
+/* ---------- 별똥별: 손을 빠르게 휘두르면 ---------- */
+const meteors = [], hist = { a: [], b: [] };
+let meteorT = 0, noEraseUntil = 0;
+function swipeCheck(P, key, t) {
+  const h = hist[key], p = P[9];
+  h.push({ x: p.x, y: p.y, t }); while (h.length && t - h[0].t > 140) h.shift();
+  if (h.length < 3 || t - meteorT < 650) return;
+  if (key === 'a' && (hand.g === 'pinch' || hand.g === 'bright' || hand.g === 'two')) return;
+  const o = h[0], dt = (t - o.t) / 1000; if (dt < 0.05) return;
+  const vx = (p.x - o.x) / dt, vy = (p.y - o.y) / dt, sp = Math.hypot(vx, vy);
+  if (sp > U() * 2.2) { meteorT = t; noEraseUntil = t + 700; spawnMeteor(p.x, p.y, vx / sp, vy / sp, t); h.length = 0; }
+}
+function spawnMeteor(x, y, dx, dy, t) {
+  const sp = U() * (0.9 + Math.random() * 0.5) / 1000; // px/ms
+  meteors.push({ x: x - dx * U() * 0.05, y: y - dy * U() * 0.05, dx, dy, sp, born: t, life: 1000 + Math.random() * 300 });
+}
+function drawMeteors(t) {
+  for (let i = meteors.length - 1; i >= 0; i--) {
+    const m = meteors[i], age = t - m.born;
+    if (age > m.life) { meteors.splice(i, 1); continue; }
+    const k = age / m.life, A = k < 0.15 ? k / 0.15 : 1 - Math.pow((k - 0.15) / 0.85, 1.6);
+    const hx = m.x + m.dx * m.sp * age, hy = m.y + m.dy * m.sp * age, L = U() * 0.3 * Math.min(1, age / 250);
+    ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round';
+    const g = ctx.createLinearGradient(hx, hy, hx - m.dx * L, hy - m.dy * L);
+    g.addColorStop(0, `rgba(255,252,235,${0.95 * A})`); g.addColorStop(0.3, `rgba(255,225,170,${0.45 * A})`); g.addColorStop(1, 'rgba(255,210,150,0)');
+    ctx.strokeStyle = g; ctx.lineWidth = 3.2; ctx.beginPath(); ctx.moveTo(hx, hy); ctx.lineTo(hx - m.dx * L, hy - m.dy * L); ctx.stroke();
+    ctx.restore();
+    sparkle(hx, hy, 4.5, A);
+  }
+}
+const bits = []; // 완성 축하 반짝이
+function burst(x, y, n, t) { for (let i = 0; i < n; i++) { const a = Math.random() * 6.283, v = (0.05 + Math.random() * 0.18) * U() / 1000; bits.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, born: t, life: 900 + Math.random() * 700 }); } }
+function drawBits(t) {
+  for (let i = bits.length - 1; i >= 0; i--) { const b = bits[i], age = t - b.born; if (age > b.life) { bits.splice(i, 1); continue; }
+    sparkle(b.x + b.vx * age, b.y + b.vy * age, 2.6, 1 - age / b.life); }
+}
+
+/* ---------- 별자리 따라 그리기 ---------- */
+let traceDone = false, arrows = [], arrowDw = null, arrowLock = 0;
+function tplPts() { const c = CONS[st.ci], cx = W / 2, cy = H * 0.44, R = Math.min(W * 0.34, H * 0.33); return c.s.map(p => ({ x: cx + p[0] * R, y: cy + p[1] * R, m: p[2] })); }
+function placeStar(x, y) { // 따라 그리기 중이면 가까운 밑그림 별 자리에 딱 맞춰 놓기
+  if (st.trace) {
+    const T = tplPts(), R = U() * 0.055; let best = null, bd = R;
+    for (const p of T) { const d = Math.hypot(p.x - x, p.y - y); if (d < bd && !nearest(p.x, p.y, U() * 0.02)) { bd = d; best = p; } }
+    if (best) return addStar(best.x, best.y, bFromMag(best.m), true);
+  }
+  return addStar(x, y);
+}
+function goCons(dir, t) {
+  st.ci = (st.ci + dir + CONS.length) % CONS.length; saveSet();
+  stars.forEach(killStar); traceDone = false; arrowLock = t + 900;
+}
+function arrowAt(x, y) { if (!st.trace) return null; return arrows.find(a => Math.hypot(a.x - x, a.y - y) < a.r * 1.6) || null; }
+function palmArrow(t) { // 손바닥을 화살표에 0.6초 올리면 넘기기
+  const a = arrowAt(hand.x, hand.y);
+  if (!a) { arrowDw = null; return false; }
+  if (t < arrowLock) return true;
+  if (!arrowDw || arrowDw.dir !== a.dir) arrowDw = { dir: a.dir, t };
+  if (t - arrowDw.t > 600) { goCons(a.dir, t); arrowDw = null; }
+  return true;
+}
+function drawTemplate(t) {
+  arrows = [];
+  if (!st.trace) return;
+  const c = CONS[st.ci], T = tplPts(), Rm = U() * 0.035, k = U() / 900;
+  const M = T.map(p => nearest(p.x, p.y, Rm));
+  ctx.save(); ctx.lineCap = 'round';
+  for (const [i, j] of c.l) {
+    const ok = M[i] && M[j] && hasLink(M[i], M[j]);
+    ctx.strokeStyle = ok ? 'rgba(233,207,142,.0)' : 'rgba(175,190,235,.17)'; ctx.lineWidth = 2; ctx.setLineDash([2, 7]);
+    ctx.beginPath(); ctx.moveTo(T[i].x, T[i].y); ctx.lineTo(T[j].x, T[j].y); ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  T.forEach((p, i) => {
+    const r = (2.2 + Math.max(0, 5 - p.m) * 1.1) * k;
+    if (M[i]) { ctx.strokeStyle = 'rgba(233,207,142,.55)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(p.x, p.y, r + 9 * k + 6, 0, 6.283); ctx.stroke(); }
+    else { ctx.fillStyle = 'rgba(205,215,245,.22)'; ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, 6.283); ctx.fill(); ctx.strokeStyle = 'rgba(205,215,245,.22)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(p.x, p.y, r + 5, 0, 6.283); ctx.stroke(); }
+  });
+  ctx.restore();
+  const ns = M.filter(Boolean).length, ne = c.l.filter(([i, j]) => M[i] && M[j] && hasLink(M[i], M[j])).length;
+  if (!traceDone && ns === T.length && ne === c.l.length) { traceDone = t; T.forEach(p => burst(p.x, p.y, 6, t)); }
+  if (traceDone && (ns < T.length || ne < c.l.length)) traceDone = false;
+  // 아래 가운데: 이름 + 양옆 화살표
+  const y = H - Math.max(52, H * 0.075), done = !!traceDone;
+  ctx.save(); ctx.textAlign = 'center';
+  ctx.font = `700 ${Math.round(Math.max(22, U() * 0.034))}px "Gowun Batang", serif`;
+  const glow = done ? 0.6 + 0.4 * Math.sin(t / 200) : 0;
+  ctx.shadowColor = 'rgba(233,207,142,.8)'; ctx.shadowBlur = 18 * glow;
+  ctx.fillStyle = done ? 'rgba(245,220,150,.98)' : 'rgba(244,239,226,.9)';
+  ctx.fillText(c.ko, W / 2, y + 8);
+  const tw = ctx.measureText(c.ko).width; ctx.shadowBlur = 0;
+  ctx.font = `${Math.round(Math.max(13, U() * 0.017))}px "Gowun Dodum", sans-serif`; ctx.fillStyle = 'rgba(244,239,226,.55)';
+  ctx.fillText(done ? '완성!' : `별 ${ns}/${T.length} · 선 ${ne}/${c.l.length}${c.bd ? ' · ' + c.bd : ''}`, W / 2, y + 32);
+  ctx.restore();
+  const ar = Math.max(24, U() * 0.034), gap = tw / 2 + ar + 34;
+  for (const dir of [-1, 1]) {
+    const ax = W / 2 + dir * gap, ay = y;
+    arrows.push({ x: ax, y: ay, r: ar, dir });
+    const hot = arrowDw && arrowDw.dir === dir ? Math.min(1, (t - arrowDw.t) / 600) : 0;
+    ctx.save(); ctx.strokeStyle = 'rgba(244,239,226,.5)'; ctx.lineWidth = 1.5; ctx.fillStyle = `rgba(233,207,142,${0.06 + 0.2 * hot})`;
+    ctx.beginPath(); ctx.arc(ax, ay, ar, 0, 6.283); ctx.fill(); ctx.stroke();
+    ctx.strokeStyle = 'rgba(244,239,226,.85)'; ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.beginPath(); ctx.moveTo(ax - dir * ar * 0.12 + dir * -ar * 0.0, ay - ar * 0.36); ctx.lineTo(ax + dir * ar * 0.28, ay); ctx.lineTo(ax - dir * ar * 0.12, ay + ar * 0.36); ctx.stroke();
+    if (hot) { ctx.strokeStyle = 'rgba(233,207,142,.95)'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(ax, ay, ar + 6, -Math.PI / 2, -Math.PI / 2 + 6.283 * hot); ctx.stroke(); }
+    ctx.restore();
+  }
 }
 
 /* ---------- 터치·마우스 ---------- */
 let tp = null, lastTap = { t: 0, s: null };
 cv.addEventListener('pointerdown', e => {
   $('panel').classList.remove('open');
+  const ar = arrowAt(e.clientX, e.clientY); if (ar) { goCons(ar.dir, performance.now()); return; }
   const s = nearest(e.clientX, e.clientY, U() * 0.06);
   tp = { id: e.pointerId, x: e.clientX, y: e.clientY, s, dx: s ? s.x - e.clientX : 0, dy: s ? s.y - e.clientY : 0, moved: 0, b0: s ? s.b : 0, bright: false };
   cv.setPointerCapture(e.pointerId);
@@ -417,7 +717,7 @@ cv.addEventListener('pointerup', e => {
   if (tp.s && tp.moved < 8 && !tp.bright) {
     if (lastTap.s === tp.s && now - lastTap.t < 380) { killStar(tp.s); lastTap = { t: 0, s: null }; }
     else lastTap = { t: now, s: tp.s };
-  } else if (!tp.s && tp.moved < 10) addStar(tp.x, tp.y);
+  } else if (!tp.s && tp.moved < 10 && !arrowAt(tp.x, tp.y)) placeStar(tp.x, tp.y);
   tp = null;
 });
 
@@ -434,8 +734,7 @@ $('bClear').onclick = () => {
   clearArm = Date.now(); b.textContent = '한 번 더 누르면 지워요'; b.classList.add('warn');
   setTimeout(() => { if (Date.now() - clearArm >= 2900) { b.textContent = '모두 지우기'; b.classList.remove('warn'); } }, 3000);
 };
-$('bSave').onclick = async () => {
-  $('panel').classList.remove('open');
+async function capture() {
   const c = document.createElement('canvas'); c.width = cv.width; c.height = cv.height;
   const x = c.getContext('2d'); x.fillStyle = '#000'; x.fillRect(0, 0, c.width, c.height);
   if (video.videoWidth) {
@@ -446,18 +745,30 @@ $('bSave').onclick = async () => {
   }
   const g = x.createRadialGradient(c.width / 2, c.height * 0.3, 0, c.width / 2, c.height * 0.3, Math.max(c.width, c.height) * 0.7);
   g.addColorStop(0, 'rgba(30,40,90,.3)'); g.addColorStop(1, 'rgba(5,6,16,.5)'); x.fillStyle = g; x.fillRect(0, 0, c.width, c.height);
-  const keep = lastSeen; lastSeen = -1e9; frame(performance.now()); lastSeen = keep; // 손 층은 빼고 별만
+  capturing = true; frame(performance.now()); capturing = false; // 손·밑그림은 빼고 별만
   x.drawImage(cv, 0, 0);
   const d = new Date(), p = n => String(n).padStart(2, '0');
   x.font = `${Math.round(15 * DPR)}px "Gowun Dodum", sans-serif`; x.fillStyle = 'rgba(244,239,226,.6)'; x.textAlign = 'right';
-  x.fillText(`별빛 손짓 · ${d.getFullYear()}.${p(d.getMonth() + 1)}.${p(d.getDate())}`, c.width - 18 * DPR, c.height - 18 * DPR);
-  const blob = await new Promise(r => c.toBlob(r, 'image/png'));
-  const name = `별빛손짓_${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.png`;
-  const file = new File([blob], name, { type: 'image/png' });
-  if (navigator.canShare && navigator.canShare({ files: [file] })) { try { await navigator.share({ files: [file] }); return; } catch (e) { if (e.name === 'AbortError') return; } }
+  x.fillText(`별빛 손짓${st.trace ? ' · ' + CONS[st.ci].ko : ''} · ${d.getFullYear()}.${p(d.getMonth() + 1)}.${p(d.getDate())}`, c.width - 18 * DPR, c.height - 18 * DPR);
+  const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.92));
+  const name = `starhand_${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.jpg`;
+  // 자동 저장: 공유 창 없이 바로 내려받기
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 4000); toast('사진을 저장했어요');
+  setTimeout(() => URL.revokeObjectURL(a.href), 8000);
+  shots++; toast(`사진을 저장했어요 (${shots}장째)`);
+}
+let shots = 0, shooting = false;
+$('shot').onclick = async () => {
+  if (shooting) return; shooting = true; $('panel').classList.remove('open');
+  const cEl = $('count'); cEl.style.display = 'grid';
+  for (const n of [3, 2, 1]) { cEl.textContent = n; await new Promise(r => setTimeout(r, 900)); }
+  cEl.style.display = 'none';
+  const f = $('flash'); f.style.transition = 'none'; f.style.opacity = '.85';
+  requestAnimationFrame(() => { f.style.transition = 'opacity .5s'; f.style.opacity = '0'; });
+  try { await capture(); } catch (e) { console.warn(e); toast('사진을 저장하지 못했어요'); }
+  shooting = false;
 };
+$('bTrace').onclick = () => { st.trace = !st.trace; saveSet(); applySet(); traceDone = false; $('panel').classList.remove('open'); };
 
 /* ---------- 시작 ---------- */
 let started = false;
@@ -473,7 +784,8 @@ $('go').onclick = async () => {
 };
 $('touchOnly').onclick = () => { hand.mode = 'touch'; begin(); };
 if (TEST) {
-  window.__state = () => ({ stars: stars.filter(s => !s.dying).map(s => ({ id: s.id, x: Math.round(s.x), y: Math.round(s.y), b: +s.b.toFixed(2) })), links: links.map(l => [l.a, l.b]), g: hand.g });
+  window.__tpl = () => tplPts(); window.__st = st; window.__meteors = () => meteors.length; window.__two = () => !!two;
+  window.__state = () => ({ trace: st.trace, ci: st.ci, done: !!traceDone, stars: stars.filter(s => !s.dying).map(s => ({ id: s.id, x: Math.round(s.x), y: Math.round(s.y), b: +s.b.toFixed(2) })), links: links.map(l => [l.a, l.b]), g: hand.g });
   window.__setStars = arr => { stars = []; links = []; arr.forEach(([x, y, b]) => { const s = addStar(x, y, b); if (s) s.born -= 2000; }); };
   window.__link = pairs => { pairs.forEach(([a, b]) => link(stars[a], stars[b])); links.forEach(l => l.born -= 2000); };
   begin();
