@@ -10,7 +10,7 @@
 <style>
 :root{--ink:#f4efe2;--sub:#b9b3a4;--gold:#e9cf8e;--line:rgba(233,207,142,.3);--panel:rgba(10,12,24,.66)}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html,body{margin:0;height:100%;background:#000;color:var(--ink);font-family:"Gowun Dodum","Noto Sans KR",system-ui,sans-serif;overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none}
+html,body{margin:0;height:100%;width:100%;background:#000;color:var(--ink);font-family:"Gowun Dodum","Noto Sans KR",system-ui,sans-serif;overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none}
 /* 1층: 카메라 */
 /* 카메라 영상은 숨겨 두고, 손 인식에 쓴 바로 그 장면을 #camcv에 그려서 보여 줘요 (화면 속 손과 별빛이 어긋나지 않게) */
 #cam{position:fixed;left:0;top:0;width:2px;height:2px;opacity:.01;pointer-events:none}
@@ -97,7 +97,7 @@ html,body{margin:0;height:100%;background:#000;color:var(--ink);font-family:"Gow
   <div class="sp" id="sp"><button type="button" id="spBtn"><canvas width="88" height="88"></canvas><span id="spName"></span><em>▾</em></button><div id="spList"></div></div>
   <div class="row"><button id="bTrace">별자리 따라 그리기 켜기</button></div>
   <div class="row"><button id="bClear">모두 지우기</button><button id="bFlip">좌우 반전</button></div>
-  <div class="row"><button id="bHelp">손 모양 안내</button></div>
+  <div class="row"><button id="bFull">전체화면</button><button id="bHelp">손 모양 안내</button></div>
   <div class="ver" id="spd"></div><div class="ver" id="ver"></div>
 </div>
 <div id="help"><div class="card"><h3>손 모양</h3><ul class="guide" id="guide2"></ul></div></div>
@@ -109,6 +109,7 @@ html,body{margin:0;height:100%;background:#000;color:var(--ink);font-family:"Gow
     <p>손가락으로 밤하늘에 별을 띄워 보세요.</p>
     <div class="gbox"><h3>손 모양</h3><ul class="guide" id="guide1"></ul></div><br>
     <button class="go" id="go">카메라 켜고 시작</button>
+    <button class="alt" id="goFull">전체화면으로 시작</button>
     <button class="alt" id="touchOnly">카메라 없이 손가락(터치)으로 하기</button>
     <div class="msg" id="msg"></div>
     <div class="ver2" id="ver2"></div>
@@ -118,7 +119,7 @@ html,body{margin:0;height:100%;background:#000;color:var(--ink);font-family:"Gow
 <script>
 (() => {
 'use strict';
-const APP_VER = '11월 13일 14:47 수정본';
+const APP_VER = '11월 13일 15:19 수정본';
 const MP_VER = '0.10.14';
 const MP_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VER}`;
 const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
@@ -859,6 +860,20 @@ buildStarPicker();
 setInterval(() => { if ($('panel').classList.contains('open')) $('spd').textContent = landmarker ? `인식 속도 ${Math.round(perf.fps)}번/초 · 한 번 ${perf.ms.toFixed(0)}ms` : ''; }, 500);
 $('knob').onclick = () => { $('panel').classList.toggle('open'); $('knob').classList.remove('dim'); clearTimeout(knobT); knobT = setTimeout(() => $('knob').classList.add('dim'), 4000); };
 $('bFlip').onclick = () => { st.mirror = !st.mirror; saveSet(); applySet(); };
+const fsEl = () => document.fullscreenElement || document.webkitFullscreenElement;
+const fsOK = () => !!(document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen);
+function fsLabel() { $('bFull').textContent = fsEl() ? '전체화면 끄기' : '전체화면'; $('bFull').classList.toggle('on', !!fsEl()); }
+$('bFull').onclick = async () => {
+  if (!fsOK()) { toast('이 브라우저는 전체화면이 안 돼요. 공유 → 홈 화면에 추가로 열어 주세요'); return; }
+  try {
+    const d = document.documentElement;
+    if (fsEl()) await (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    else await (d.requestFullscreen || d.webkitRequestFullscreen).call(d, { navigationUI: 'hide' });
+  } catch (e) { toast('전체화면으로 바꾸지 못했어요'); }
+  $('panel').classList.remove('open');
+};
+document.addEventListener('fullscreenchange', () => { fsLabel(); resize(); });
+document.addEventListener('webkitfullscreenchange', () => { fsLabel(); resize(); });
 $('bHelp').onclick = () => { $('panel').classList.remove('open'); $('help').classList.add('open'); };
 $('help').onclick = () => $('help').classList.remove('open');
 let clearArm = 0;
@@ -916,6 +931,8 @@ $('go').onclick = async () => {
     $('msg').textContent = /Permission|NotAllowed/i.test(m) ? '카메라 허용이 필요해요. 주소창의 카메라 설정을 확인해 주세요.' : /NotFound|Requested device/i.test(m) ? '카메라를 찾지 못했어요.' : '시작하지 못했어요: ' + m;
   }
 };
+$('goFull').onclick = async () => { if (fsOK()) { try { const d = document.documentElement; await (d.requestFullscreen || d.webkitRequestFullscreen).call(d); } catch (e) {} } $('go').click(); };
+if (!fsOK()) $('goFull').style.display = 'none';
 $('touchOnly').onclick = () => { hand.mode = 'touch'; begin(); };
 if (TEST) {
   window.__tpl = () => tplPts(); window.__st = st; window.__meteors = () => meteors.length; window.__two = () => !!two;
