@@ -28,6 +28,16 @@ html,body{margin:0;height:100%;background:#000;color:var(--ink);font-family:"Gow
 #panel .row{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
 #panel button{font:inherit;font-size:13px;color:var(--ink);background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:10px;min-height:36px;padding:0 10px;cursor:pointer;flex:1 1 auto}
 #panel button.warn{border-color:#ffb36b;color:#ffd7ac}
+.sp{position:relative;margin:2px 0 12px}
+#spBtn{display:flex!important;align-items:center;gap:10px;width:100%;text-align:left;padding:4px 10px!important;min-height:52px!important}
+#spBtn canvas,#spList canvas{width:44px;height:44px;border-radius:10px;background:#070915;flex:none}
+#spBtn span{flex:1;font-size:15px}#spBtn em{font-style:normal;color:var(--sub)}
+#spList{display:none;margin-top:6px;max-height:300px;overflow:auto;border:1px solid var(--line);border-radius:12px;background:rgba(8,10,22,.96)}
+#spList.open{display:block}
+#spList div{display:flex;align-items:center;gap:10px;padding:5px 8px;cursor:pointer;font-size:14px;border-bottom:1px solid rgba(233,207,142,.08)}
+#spList div:last-child{border-bottom:0}
+#spList div.on{background:rgba(233,207,142,.16);color:#fff}
+#panel{max-height:calc(100vh - 90px);overflow:auto}
 #panel .ver{margin-top:8px;font-size:11px;color:rgba(244,239,226,.45);text-align:right}
 /* 손 모양 안내 (시작 화면과 조절판에서만) */
 .guide{list-style:none;margin:0;padding:0;display:grid;gap:4px;text-align:left}
@@ -80,6 +90,8 @@ html,body{margin:0;height:100%;background:#000;color:var(--ink);font-family:"Gow
   <label>카메라 밝기 <span id="vB"></span><input type="range" id="sB" min="5" max="120" step="1"></label>
   <label>카메라 투명도 <span id="vA"></span><input type="range" id="sA" min="0" max="100" step="1"></label>
   <label>한 번에 인식할 손 <span id="vN"></span><input type="range" id="sN" min="1" max="6" step="1"></label>
+  <label>별 모양</label>
+  <div class="sp" id="sp"><button type="button" id="spBtn"><canvas width="88" height="88"></canvas><span id="spName"></span><em>▾</em></button><div id="spList"></div></div>
   <div class="row"><button id="bTrace">별자리 따라 그리기 켜기</button></div>
   <div class="row"><button id="bClear">모두 지우기</button><button id="bFlip">좌우 반전</button></div>
   <div class="row"><button id="bHelp">손 모양 안내</button></div>
@@ -103,7 +115,7 @@ html,body{margin:0;height:100%;background:#000;color:var(--ink);font-family:"Gow
 <script>
 (() => {
 'use strict';
-const APP_VER = '11월 13일 09:06 수정본';
+const APP_VER = '11월 13일 09:23 수정본';
 const MP_VER = '0.10.14';
 const MP_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VER}`;
 const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
@@ -184,7 +196,7 @@ function handSVG(pose, o) {
 
 $('ver').textContent = APP_VER; $('ver2').textContent = APP_VER;
 const T = '\u{1F3FB}'; // 밝은 피부색
-const GUIDE = [['☝' + T, '검지 하나', '별 고르기'], ['🤏' + T, '집었다 놓기', '별 만들기'], ['🤏' + T + '<b>↔</b>', '별을 집고 움직이기', '별 옮기기'], ['👆' + T + '<b>↻</b>', '엄지·검지 브이 돌리기', '시계 방향 밝게, 반대 어둡게'], ['☝' + T + '<b>⋯</b>', '별마다 잠깐 머물기', '별자리 잇기'], ['🖐' + T, '손바닥으로 문지르기', '별 지우기'], ['✊' + T, '주먹', '멈추기'], ['<span class="diag"><em class="rot a">🤏' + T + '</em><b>⤢</b><em class="rot c">🤏' + T + '</em></span>', '두 손으로 집고 벌리기', '별 전체 크게·작게'], ['👋' + T, '빠르게 휘두르기', '별똥별'], ['✋' + T + '<b>‹›</b>', '화살표에 손바닥', '다른 별자리로']];
+const GUIDE = [['☝' + T, '검지 하나', '별 고르기'], ['🤏' + T, '집었다 놓기', '별 만들기'], ['🤏' + T + '<b>↔</b>', '별을 집고 움직이기', '별 옮기기'], ['👆' + T + '<b>↻</b>', '엄지·검지 브이 돌리기', '시계 방향 밝게, 반대 어둡게'], ['☝' + T + '<b>⋯</b>', '별마다 잠깐 머물기', '별자리 잇기'], ['🖐' + T, '손바닥으로 문지르기', '별 지우기'], ['✊' + T, '주먹', '멈추기'], ['<span class="diag"><em class="rot a">🤏' + T + '</em><b>⤢</b><em class="rot c">🤏' + T + '</em></span>', '두 손으로 집고 벌리기', '별 전체 크게·작게'], ['✊' + T + '<b>›</b>🖐' + T, '주먹 쥐었다 펴며 던지기', '별똥별'], ['✋' + T + '<b>‹›</b>', '화살표에 손바닥', '다른 별자리로']];
 const emo = h => h.includes('diag') ? h : h.replace(/(🤏\u{1F3FB})/gu, '<em class="rot">$1</em>');
 const gl = GUIDE.map(([i, a, b]) => `<li><i class="emo">${emo(i)}</i><span>${a} <small>· ${b}</small></span></li>`).join('');
 $('guide1').innerHTML = gl; $('guide2').innerHTML = gl;
@@ -202,7 +214,7 @@ addEventListener('resize', resize); resize();
 const U = () => Math.min(W, H);
 
 /* ---------- 설정 (카메라 밝기·투명도·반전) ---------- */
-const st = { mirror: true, camB: 50, camA: 100, trace: false, ci: 15, nh: 4 };
+const st = { mirror: true, camB: 50, camA: 100, trace: false, ci: 15, nh: 4, ss: 1 };
 try { Object.assign(st, JSON.parse(localStorage.getItem('starhand-set2') || '{}')); } catch (e) {}
 const saveSet = () => { try { localStorage.setItem('starhand-set2', JSON.stringify(st)); } catch (e) {} };
 function applySet() {
@@ -228,7 +240,7 @@ let stars = [], links = [], nextId = 1;
 const MIN_GAP = () => U() * 0.03;
 function addStar(x, y, b = 0.6, force) {
   if (!force && stars.some(s => !s.dying && Math.hypot(s.x - x, s.y - y) < MIN_GAP())) return null;
-  const s = { id: nextId++, x, y, b, born: performance.now(), ph: Math.random() * 6.28, sp: 1.5 + Math.random() * 2, dying: 0 };
+  const s = { id: nextId++, x, y, b, born: performance.now(), ph: Math.random() * 6.28, sp: 1.5 + Math.random() * 2, dying: 0, tc: Math.floor(Math.random() * 4) };
   stars.push(s); return s;
 }
 function killStar(s) { if (!s.dying) s.dying = performance.now(); }
@@ -247,26 +259,39 @@ const hasLink = (a, b) => links.some(l => (l.a === a.id && l.b === b.id) || (l.a
 const bFromMag = m => Math.max(0.1, Math.min(1, 1 - (m - 0.5) / 5.5));
 const mag = b => Math.max(1, Math.min(6, Math.round(1 + (1 - b) * 5)));
 
+/* ---------- 별 모양 8가지 (조절판에서 고르기) ---------- */
+const TEMP = ['170,200,255', '255,255,250', '255,235,180', '255,190,140']; // 파랑·흰색·노랑·주황
+function sGlow(x, X, Y, R, A, c = '255,240,205') { const g = x.createRadialGradient(X, Y, 0, X, Y, R); g.addColorStop(0, `rgba(${c},${A})`); g.addColorStop(.25, `rgba(${c},${A * .42})`); g.addColorStop(1, `rgba(${c},0)`); x.fillStyle = g; x.beginPath(); x.arc(X, Y, R, 0, 6.283); x.fill(); }
+function sCore(x, X, Y, r, A) { x.fillStyle = `rgba(255,255,252,${Math.min(1, A * 1.4)})`; x.beginPath(); x.arc(X, Y, r, 0, 6.283); x.fill(); }
+function sSpike(x, X, Y, L, w, ang, A, c = '255,245,220') { x.save(); x.translate(X, Y); x.rotate(ang); const g = x.createLinearGradient(-L, 0, L, 0); g.addColorStop(0, `rgba(${c},0)`); g.addColorStop(.5, `rgba(${c},${A})`); g.addColorStop(1, `rgba(${c},0)`); x.fillStyle = g; x.beginPath(); x.moveTo(-L, 0); x.lineTo(0, -w); x.lineTo(L, 0); x.lineTo(0, w); x.closePath(); x.fill(); x.restore(); }
+function sSparkle(x, X, Y, r, A) { x.fillStyle = `rgba(255,255,250,${A})`; x.beginPath(); x.moveTo(X, Y - r); x.quadraticCurveTo(X, Y, X + r, Y); x.quadraticCurveTo(X, Y, X, Y + r); x.quadraticCurveTo(X, Y, X - r, Y); x.quadraticCurveTo(X, Y, X, Y - r); x.fill(); }
+function s5(x, X, Y, R, path) { x.beginPath(); for (let k = 0; k <= 10; k++) { const rr = k % 2 ? R * .45 : R, a = -Math.PI / 2 + k * Math.PI / 5; x.lineTo(X + rr * Math.cos(a) + (path || 0), Y + rr * Math.sin(a) + (path || 0) * .5); } x.closePath(); }
+// (캔버스, x, y, 밝기 0~1, 크기 k, 투명도 배수 m, 별 정보)
+const STYLES = [
+  { id: 1, name: '기본 별빛', f: (x, X, Y, b, k, m) => { const A = (.25 + .75 * b) * m, G = (8 + b * 34) * k, C = (1.6 + b * 4.2) * k; const g = x.createRadialGradient(X, Y, 0, X, Y, G); g.addColorStop(0, `rgba(255,248,225,${A})`); g.addColorStop(0.25, `rgba(255,232,170,${A * 0.45})`); g.addColorStop(1, 'rgba(255,220,150,0)'); x.fillStyle = g; x.beginPath(); x.arc(X, Y, G, 0, 6.283); x.fill();
+    if (b > .35) { x.strokeStyle = `rgba(255,245,215,${A * .55})`; x.lineWidth = Math.max(.8, C * .45); x.lineCap = 'round'; const L = G * (.9 + b); x.beginPath(); x.moveTo(X - L, Y); x.lineTo(X + L, Y); x.moveTo(X, Y - L); x.lineTo(X, Y + L); x.stroke(); } x.fillStyle = `rgba(255,255,250,${Math.min(1, A * 1.4)})`; x.beginPath(); x.arc(X, Y, C, 0, 6.283); x.fill(); } },
+  { id: 3, name: '여섯 갈래 빛줄기', f: (x, X, Y, b, k, m) => { const A = (.3 + .7 * b) * m, L = (10 + b * 58) * k; sGlow(x, X, Y, (8 + b * 26) * k, A * .9); for (let i = 0; i < 3; i++) sSpike(x, X, Y, L, (.8 + b * 1.6) * k, i * Math.PI / 3 + Math.PI / 2, A * .9); sSpike(x, X, Y, L * .45, (.6 + b) * k, 0, A * .5); sCore(x, X, Y, (1.5 + b * 3.2) * k, A); } },
+  { id: 4, name: '여덟 갈래 반짝이', f: (x, X, Y, b, k, m) => { const A = (.3 + .7 * b) * m, L = (10 + b * 60) * k; sGlow(x, X, Y, (8 + b * 26) * k, A * .9); sSpike(x, X, Y, L, (.9 + b * 1.8) * k, 0, A); sSpike(x, X, Y, L, (.9 + b * 1.8) * k, Math.PI / 2, A); sSpike(x, X, Y, L * .45, (.6 + b) * k, Math.PI / 4, A * .75); sSpike(x, X, Y, L * .45, (.6 + b) * k, -Math.PI / 4, A * .75); sCore(x, X, Y, (1.5 + b * 3) * k, A); } },
+  { id: 5, name: '네 갈래 반짝임', f: (x, X, Y, b, k, m) => { const A = (.35 + .65 * b) * m; sGlow(x, X, Y, (10 + b * 30) * k, A * .8); sSparkle(x, X, Y, (5 + b * 20) * k, A); sCore(x, X, Y, (1 + b * 1.6) * k, A); } },
+  { id: 6, name: '색깔 있는 별', f: (x, X, Y, b, k, m, s) => { const c = TEMP[(s && s.tc) || 0], A = (.3 + .7 * b) * m; sGlow(x, X, Y, (9 + b * 32) * k, A, c); if (b > .4) { sSpike(x, X, Y, (10 + b * 36) * k, (.7 + b * 1.2) * k, 0, A * .6, c); sSpike(x, X, Y, (10 + b * 36) * k, (.7 + b * 1.2) * k, Math.PI / 2, A * .6, c); } sCore(x, X, Y, (1.6 + b * 3.6) * k, A); } },
+  { id: 9, name: '오각 별', f: (x, X, Y, b, k, m) => { const A = (.35 + .65 * b) * m; sGlow(x, X, Y, (10 + b * 30) * k, A * .8); x.fillStyle = `rgba(255,246,215,${A})`; s5(x, X, Y, (5 + b * 16) * k); x.fill(); } },
+  { id: 14, name: '무지개 빛줄기', f: (x, X, Y, b, k, m) => { const A = (.3 + .7 * b) * m, L = (10 + b * 56) * k, w = (.9 + b * 1.8) * k; sGlow(x, X, Y, (8 + b * 24) * k, A);
+    for (const ang of [0, Math.PI / 2]) { x.save(); x.translate(X, Y); x.rotate(ang); const g = x.createLinearGradient(-L, 0, L, 0); g.addColorStop(0, 'rgba(170,110,255,0)'); g.addColorStop(.2, `rgba(90,200,255,${A * .6})`); g.addColorStop(.5, `rgba(255,255,245,${A})`); g.addColorStop(.8, `rgba(255,190,90,${A * .6})`); g.addColorStop(1, 'rgba(255,90,90,0)'); x.fillStyle = g; x.beginPath(); x.moveTo(-L, 0); x.lineTo(0, -w); x.lineTo(L, 0); x.lineTo(0, w); x.fill(); x.restore(); }
+    sCore(x, X, Y, (1.5 + b * 3.2) * k, A); } },
+  { id: 20, name: '손그림 별', f: (x, X, Y, b, k, m) => { const A = (.4 + .6 * b) * m, R = (5 + b * 15) * k; sGlow(x, X, Y, (8 + b * 26) * k, A * .6, '255,225,160'); x.strokeStyle = `rgba(255,225,140,${A})`; x.lineWidth = Math.max(1, (1.2 + b * 1.6) * k * .8); x.lineJoin = 'round';
+    for (let p = 0; p < 2; p++) { x.beginPath(); for (let i = 0; i <= 10; i++) { const rr = i % 2 ? R * .45 : R, a = -Math.PI / 2 + i * Math.PI / 5 + p * .04, j = (p ? 1.5 : -1) * k * .6; x.lineTo(X + rr * Math.cos(a) + j, Y + rr * Math.sin(a) + j * .5); } x.stroke(); } } },
+];
+const styleOf = id => STYLES.find(v => v.id === id) || STYLES[0];
 function drawStar(s, t, hi) {
   const age = (t - s.born) / 1000;
   let a = Math.min(1, age * 3), pop = age < 0.35 ? 1 + (0.35 - age) * 3 : 1;
   if (s.dying) { const d = (t - s.dying) / 450; a *= Math.max(0, 1 - d); pop *= 1 + d * 0.8; }
   const tw = 0.82 + 0.18 * Math.sin(t / 1000 * s.sp + s.ph);
-  const k = U() / 900;
-  const core = (1.6 + s.b * 4.2) * k * pop, glow = (8 + s.b * 34) * k * pop;
-  const A = a * (0.25 + 0.75 * s.b) * tw;
+  const k = U() / 900 * pop;
   ctx.save(); ctx.globalCompositeOperation = 'lighter';
-  const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, glow);
-  g.addColorStop(0, `rgba(255,248,225,${A})`); g.addColorStop(0.25, `rgba(255,232,170,${A * 0.45})`); g.addColorStop(1, 'rgba(255,220,150,0)');
-  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(s.x, s.y, glow, 0, 6.283); ctx.fill();
-  if (s.b > 0.35) {
-    const L = glow * (0.9 + s.b), w = Math.max(0.8, core * 0.45);
-    ctx.strokeStyle = `rgba(255,245,215,${A * 0.55})`; ctx.lineWidth = w; ctx.lineCap = 'round';
-    ctx.beginPath(); ctx.moveTo(s.x - L, s.y); ctx.lineTo(s.x + L, s.y); ctx.moveTo(s.x, s.y - L); ctx.lineTo(s.x, s.y + L); ctx.stroke();
-  }
-  ctx.fillStyle = `rgba(255,255,250,${Math.min(1, A * 1.4)})`; ctx.beginPath(); ctx.arc(s.x, s.y, core, 0, 6.283); ctx.fill();
+  styleOf(st.ss).f(ctx, s.x, s.y, s.b, k, a * tw, s);
   if (hi) { // 고른 별: 바깥에 은은한 빛 고리
-    const rr = glow * 0.7 + 8, gg = ctx.createRadialGradient(s.x, s.y, rr * 0.7, s.x, s.y, rr * 1.15);
+    const rr = (8 + s.b * 34) * k * 0.7 + 8, gg = ctx.createRadialGradient(s.x, s.y, rr * 0.7, s.x, s.y, rr * 1.15);
     gg.addColorStop(0, 'rgba(233,207,142,0)'); gg.addColorStop(0.5, `rgba(233,207,142,${0.22 * a})`); gg.addColorStop(1, 'rgba(233,207,142,0)');
     ctx.fillStyle = gg; ctx.beginPath(); ctx.arc(s.x, s.y, rr * 1.15, 0, 6.283); ctx.fill();
   }
@@ -334,6 +359,13 @@ function onHand(lm, t) {
   hand.pts = lm.map(toScreen);
   const f = classify(lm);
   const r = rawGesture(f);
+  // 별똥별: 주먹을 쥐었다가 확 펴며 던지기 (지우개와 헷갈리지 않게 '주먹 → 손바닥' 순서일 때만)
+  if (hand.g === 'fist') hand.fistT = t;
+  if (r === 'palm' && hand.fistT && t - hand.fistT < 450 && !hand.thrown) {
+    const P = hand.pts, dx = P[12].x - P[0].x, dy = P[12].y - P[0].y, L = Math.hypot(dx, dy) || 1;
+    spawnMeteor(P[12].x, P[12].y, dx / L, dy / L, t); hand.thrown = true; hand.noErase = t + 900;
+  }
+  if (r === 'fist') hand.thrown = false;
 
   // 밝기 모드: 엄지·검지 브이를 시계 방향으로 돌리면 밝게, 반시계 방향이면 어둡게
   if (bm) {
@@ -568,18 +600,13 @@ function onHands(arr, t, hd) {
   slots = slots.filter(S => {
     if (got.has(S)) return true;
     if (t - S.last < 250) return true;
-    if (S.v && t - S.v.t < 200 && S.v.sp > U() * 0.9 && t - S.mT > 600) spawnMeteor(S.cx, S.cy, S.v.dx, S.v.dy, t);
     useSlot(S); lostHand(t); keepSlot(S); return false;
   });
   // 3) 손마다 처리
   for (const [S, i] of got) {
     S.lm = arr[i]; S.pts = P[i]; S.hd = hd[i] || ''; S.f = classify(arr[i]);
     const c = C[i], gap = t - S.last;
-    if (S.last && gap > 120 && gap < 450 && Math.hypot(c.x - S.cx, c.y - S.cy) > U() * 0.22 && t - S.mT > 600 && !['pinch', 'bright', 'two'].includes(S.hand.g)) {
-      const dx = c.x - S.cx, dy = c.y - S.cy, L = Math.hypot(dx, dy); S.mT = t; S.hand.noErase = t + 700; spawnMeteor(S.cx, S.cy, dx / L, dy / L, t); // 흐려졌다 멀리서 다시 잡힘
-    }
     S.cx = c.x; S.cy = c.y; S.last = t;
-    swipeCheck(S, c, t);
   }
   // 4) 두 손 모드: 왼손·오른손이 거의 동시에 집으면 별 전체를 크게·작게
   if (two) {
@@ -628,19 +655,9 @@ function drawTwo(t) {
 
 /* ---------- 별똥별: 손을 빠르게 휘두르면 ---------- */
 const meteors = [];
-function swipeCheck(S, c, t) { // 손바닥 가운데가 0.06~0.3초 사이에 빠르게 멀리 움직이면
-  const h = S.hist; h.push({ x: c.x, y: c.y, t }); while (h.length && t - h[0].t > 300) h.shift();
-  if (h.length < 2) return;
-  let o = h[0]; for (const q of h) { if (t - q.t >= 60) o = q; }
-  const dt = (t - o.t) / 1000; if (dt < 0.04) return;
-  const dx = c.x - o.x, dy = c.y - o.y, L = Math.hypot(dx, dy), sp = L / dt;
-  S.v = { sp, dx: dx / (L || 1), dy: dy / (L || 1), t };
-  if (t - S.mT < 600 || ['pinch', 'bright', 'two'].includes(S.hand.g)) return;
-  if (sp > U() * 1.1 && L > U() * 0.12) { S.mT = t; S.hand.noErase = t + 700; spawnMeteor(c.x, c.y, dx / L, dy / L, t); h.length = 0; }
-}
 function spawnMeteor(x, y, dx, dy, t) {
   const sp = U() * (0.9 + Math.random() * 0.5) / 1000; // px/ms
-  meteors.push({ x: x - dx * U() * 0.05, y: y - dy * U() * 0.05, dx, dy, sp, born: t, life: 1000 + Math.random() * 300 });
+  meteors.push({ x, y, dx, dy, sp, born: t, life: 1000 + Math.random() * 300 });
 }
 function drawMeteors(t) {
   for (let i = meteors.length - 1; i >= 0; i--) {
@@ -763,6 +780,19 @@ cv.addEventListener('pointerup', e => {
 
 /* ---------- 조절판 ---------- */
 let knobT = 0;
+function starPreview(cv, id) {
+  const x = cv.getContext('2d'), W = cv.width, H = cv.height; x.clearRect(0, 0, W, H);
+  x.fillStyle = '#070915'; x.fillRect(0, 0, W, H); x.save(); x.globalCompositeOperation = 'lighter';
+  styleOf(id).f(x, W / 2, H / 2, 0.9, W / 80, 1, { tc: 0 }); x.restore();
+}
+function buildStarPicker() {
+  $('spList').innerHTML = STYLES.map(v => `<div data-id="${v.id}" class="${v.id === st.ss ? 'on' : ''}"><canvas width="88" height="88"></canvas>${v.name}</div>`).join('');
+  $('spList').querySelectorAll('div').forEach(d => starPreview(d.querySelector('canvas'), +d.dataset.id));
+  starPreview($('spBtn').querySelector('canvas'), st.ss); $('spName').textContent = styleOf(st.ss).name;
+}
+$('spBtn').onclick = () => $('spList').classList.toggle('open');
+$('spList').onclick = e => { const d = e.target.closest('[data-id]'); if (!d) return; st.ss = +d.dataset.id; saveSet(); buildStarPicker(); $('spList').classList.remove('open'); };
+buildStarPicker();
 setInterval(() => { if ($('panel').classList.contains('open')) $('spd').textContent = landmarker ? `인식 속도 ${Math.round(perf.fps)}번/초 · 한 번 ${perf.ms.toFixed(0)}ms` : ''; }, 500);
 $('knob').onclick = () => { $('panel').classList.toggle('open'); $('knob').classList.remove('dim'); clearTimeout(knobT); knobT = setTimeout(() => $('knob').classList.add('dim'), 4000); };
 $('bFlip').onclick = () => { st.mirror = !st.mirror; saveSet(); applySet(); };
