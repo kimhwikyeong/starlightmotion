@@ -115,7 +115,7 @@ html,body{margin:0;height:100%;background:#000;color:var(--ink);font-family:"Gow
 <script>
 (() => {
 'use strict';
-const APP_VER = '11월 13일 09:23 수정본';
+const APP_VER = '11월 13일 11:30 수정본';
 const MP_VER = '0.10.14';
 const MP_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VER}`;
 const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
@@ -316,10 +316,10 @@ function drawLinks(t) {
 /* ---------- 손 모양 판별 ---------- */
 const d2 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 function classify(lm) {
-  const size = d2(lm[0], lm[9]) || 1e-6;
+  const size = Math.max(d2(lm[0], lm[9]), d2(lm[5], lm[17]) * 1.2) || 1e-6; // 손을 기울여도 크기가 덜 흔들리게
   const pinchR = d2(lm[4], lm[8]) / size;            // 엄지 끝 ~ 검지 끝 (손 크기 기준)
   const thumbOut = d2(lm[4], lm[10]) / size > 0.55;   // 엄지가 중지 옆에서 떨어져 있으면 = 엄지를 편 것
-  const idxBent = d2(lm[0], lm[8]) < d2(lm[0], lm[6]) * 0.95; // 검지가 손바닥 쪽으로 말림 = 주먹
+  const idxBent = d2(lm[8], lm[5]) / size < 0.4; // 검지 끝이 검지 뿌리 마디에 붙을 만큼 말림 = 주먹 (집을 때 살짝 굽히는 건 괜찮음)
   const ext = [[8, 6], [12, 10], [16, 14], [20, 18]].map(([tip, pip]) => d2(lm[0], lm[tip]) > d2(lm[0], lm[pip]) * 1.12);
   return { size, pinchR, thumbOut, idxBent, ext };
 }
@@ -327,7 +327,7 @@ const newHand = () => ({ cand: 'none', candN: 0, g: 'none', pinching: false, x: 
 let hand = newHand();
 function rawGesture(f) {
   const [i, m, r, p] = f.ext;
-  if (!f.idxBent && (hand.pinching ? f.pinchR < 0.45 : f.pinchR < 0.30)) return 'pinch'; // 주먹은 집기로 보지 않음
+  if (!f.idxBent && (hand.pinching ? f.pinchR < 0.5 : f.pinchR < 0.35)) return 'pinch'; // 주먹은 집기로 보지 않음
   if (i && m && r && p) return 'palm';
   if (i && !m && !r && !p) return f.thumbOut ? 'ell' : 'point';   // 엄지·검지 브이(L자) / 검지 하나
   if (!i && !m && !r && !p) return 'fist';                         // 주먹 = 정지
@@ -387,6 +387,8 @@ function onHand(lm, t) {
   if (r === hand.cand) hand.candN++; else { hand.cand = r; hand.candN = 1; }
   const prevG = hand.g;
   if (hand.cand !== hand.g && hand.candN >= (NEED[hand.cand] || 4)) hand.g = hand.cand;
+  // 집기를 놓으면 다음 손 모양이 정해질 때까지 기다리지 않고 바로 '놓음'으로 처리 (별이 바로 생기게)
+  if (hand.g === 'pinch' && r !== 'pinch') { hand.offN = (hand.offN || 0) + 1; if (hand.offN >= 2) hand.g = r === 'other' ? 'none' : r; } else hand.offN = 0;
   const g = hand.g;
   const sp = toScreen(cursorOf(g, lm));
   hand.sizePx = f.size * sp.sc;
@@ -413,7 +415,7 @@ function gestureStart(g, t) {
 }
 function gestureEnd(g) {
   if (g === 'pinch') {
-    if (pend && pend.moved < U() * 0.05 && !pend.no) { const s = placeStar(pend.x, pend.y); if (s) hover = s; }
+    if (pend && pend.moved < U() * 0.08 && !pend.no) { const s = placeStar(pend.x, pend.y); if (s) hover = s; }
     pend = null; drag = null;
   }
   if (g === 'ell') ell = null;
