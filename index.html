@@ -12,8 +12,10 @@
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;height:100%;background:#000;color:var(--ink);font-family:"Gowun Dodum","Noto Sans KR",system-ui,sans-serif;overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none}
 /* 1층: 카메라 */
-#cam{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);filter:brightness(var(--camB,.5)) saturate(.6);opacity:var(--camA,1)}
-#cam.noflip{transform:none}
+/* 카메라 영상은 숨겨 두고, 손 인식에 쓴 바로 그 장면을 #camcv에 그려서 보여 줘요 (화면 속 손과 별빛이 어긋나지 않게) */
+#cam{position:fixed;left:0;top:0;width:2px;height:2px;opacity:.01;pointer-events:none}
+#camcv{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);filter:brightness(var(--camB,.5)) saturate(.6);opacity:var(--camA,1)}
+#camcv.noflip{transform:none}
 #sky{position:fixed;inset:0;background:radial-gradient(ellipse at 50% 30%,rgba(30,40,90,.3),rgba(5,6,16,.5) 75%);pointer-events:none}
 /* 2·3층: 별 + 손 */
 #cv{position:fixed;inset:0;width:100%;height:100%}
@@ -80,6 +82,7 @@ html,body{margin:0;height:100%;background:#000;color:var(--ink);font-family:"Gow
 </head>
 <body>
 <video id="cam" playsinline muted autoplay></video>
+<canvas id="camcv" width="2" height="2"></canvas>
 <div id="sky"></div>
 <canvas id="cv"></canvas>
 
@@ -115,7 +118,7 @@ html,body{margin:0;height:100%;background:#000;color:var(--ink);font-family:"Gow
 <script>
 (() => {
 'use strict';
-const APP_VER = '11월 13일 12:16 수정본';
+const APP_VER = '11월 13일 14:47 수정본';
 const MP_VER = '0.10.14';
 const MP_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VER}`;
 const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
@@ -218,7 +221,7 @@ const st = { mirror: true, camB: 50, camA: 100, trace: false, ci: 15, nh: 4, ss:
 try { Object.assign(st, JSON.parse(localStorage.getItem('starhand-set2') || '{}')); } catch (e) {}
 const saveSet = () => { try { localStorage.setItem('starhand-set2', JSON.stringify(st)); } catch (e) {} };
 function applySet() {
-  video.classList.toggle('noflip', !st.mirror);
+  $('camcv').classList.toggle('noflip', !st.mirror);
   document.documentElement.style.setProperty('--camB', st.camB / 100);
   document.documentElement.style.setProperty('--camA', st.camA / 100);
   $('sB').value = st.camB; $('sA').value = st.camA;
@@ -420,7 +423,7 @@ function onHand(lm, t, wl) {
   const sp = cursorOf(g, P);
   if (r !== g && prevG === g && g !== 'none') { hand.seen = t; return; } // 손 모양이 바뀌는 중 = 무시
   const jump = Math.hypot(sp.x - hand.x, sp.y - hand.y);
-  const a = t - hand.seen > 300 || prevG !== g ? 1 : (jump > U() * 0.08 || drag ? 0.75 : 0.45);
+  const a = t - hand.seen > 300 || prevG !== g ? 1 : Math.min(1, 0.35 + jump / (U() * 0.025) * 0.65); // 가만히 있을 땐 떨림만 줄이고, 움직이면 바로 따라감
   hand.x += (sp.x - hand.x) * a; hand.y += (sp.y - hand.y) * a;
   hand.seen = t;
   trail.push({ x: hand.x, y: hand.y, t }); while (trail.length > 14) trail.shift();
@@ -595,6 +598,7 @@ function frame(t) {
 
 /* ---------- 카메라 + 손 인식 ---------- */
 let landmarker = null, lastVT = -1;
+const camCtx = $('camcv').getContext('2d', { alpha: false, desynchronized: true });
 async function startCamera() {
   $('msg').textContent = '카메라를 켜는 중…';
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('이 브라우저는 카메라를 쓸 수 없어요 (https 주소인지 확인해 주세요)');
@@ -610,11 +614,15 @@ async function startCamera() {
 function detect(t) {
   if (!landmarker || video.readyState < 2 || video.currentTime === lastVT) return;
   lastVT = video.currentTime;
+  // 지금 장면을 캔버스에 찍고, 그 캔버스로 손을 찾아요 → 화면에 보이는 손과 인식 결과가 같은 순간
+  const cc = $('camcv');
+  if (cc.width !== video.videoWidth || cc.height !== video.videoHeight) { cc.width = video.videoWidth; cc.height = video.videoHeight; }
+  camCtx.drawImage(video, 0, 0);
   const t0 = performance.now();
-  const res = landmarker.detectForVideo(video, t);
+  const res = landmarker.detectForVideo(cc, t);
   perf.ms = perf.ms * 0.9 + (performance.now() - t0) * 0.1; perf.n++;
   const lms = (res && res.landmarks) || [], hd = ((res && (res.handednesses || res.handedness)) || []).map(h => h && h[0] ? h[0].categoryName : '');
-  onHands(lms, t, hd, (res && res.worldLandmarks) || []);
+  if (!TEST) onHands(lms, t, hd, (res && res.worldLandmarks) || []);
 }
 function loop(t) {
   try { detect(t); } catch (e) { console.warn(e); }
@@ -867,7 +875,7 @@ async function capture() {
     const vw = video.videoWidth, vh = video.videoHeight, sc = Math.max(c.width / vw, c.height / vh), dw = vw * sc, dh = vh * sc;
     x.save(); x.globalAlpha = st.camA / 100; x.filter = `brightness(${st.camB / 100}) saturate(.6)`;
     if (st.mirror) { x.translate(c.width, 0); x.scale(-1, 1); }
-    x.drawImage(video, (c.width - dw) / 2, (c.height - dh) / 2, dw, dh); x.restore();
+    x.drawImage($('camcv').width > 2 ? $('camcv') : video, (c.width - dw) / 2, (c.height - dh) / 2, dw, dh); x.restore(); // 화면에 보이던 바로 그 장면
   }
   const g = x.createRadialGradient(c.width / 2, c.height * 0.3, 0, c.width / 2, c.height * 0.3, Math.max(c.width, c.height) * 0.7);
   g.addColorStop(0, 'rgba(30,40,90,.3)'); g.addColorStop(1, 'rgba(5,6,16,.5)'); x.fillStyle = g; x.fillRect(0, 0, c.width, c.height);
@@ -912,6 +920,7 @@ $('touchOnly').onclick = () => { hand.mode = 'touch'; begin(); };
 if (TEST) {
   window.__tpl = () => tplPts(); window.__st = st; window.__meteors = () => meteors.length; window.__two = () => !!two;
   window.__raw = (P, wl) => { const keep = hand; hand = newHand(); const r = rawGesture(classify(wl || P)); hand = keep; return r; };
+  window.__fakeCam = async () => { video.srcObject = await navigator.mediaDevices.getUserMedia({ video: true }); await video.play(); landmarker = { detectForVideo: () => ({ landmarks: [] }) }; };
   window.__arrows = () => arrows;
   window.__slots = () => slots.map(S => ({ g: S.hand.g, bm: !!S.bm, drag: !!S.drag, chain: !!S.chain }));
   window.__state = () => ({ trace: st.trace, ci: st.ci, done: !!traceDone, stars: stars.filter(s => !s.dying).map(s => ({ id: s.id, x: Math.round(s.x), y: Math.round(s.y), b: +s.b.toFixed(2) })), links: links.map(l => [l.a, l.b]), g: hand.g });
