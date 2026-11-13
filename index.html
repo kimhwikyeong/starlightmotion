@@ -115,7 +115,7 @@ html,body{margin:0;height:100%;background:#000;color:var(--ink);font-family:"Gow
 <script>
 (() => {
 'use strict';
-const APP_VER = '11월 13일 11:44 수정본';
+const APP_VER = '11월 13일 12:16 수정본';
 const MP_VER = '0.10.14';
 const MP_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VER}`;
 const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
@@ -314,23 +314,35 @@ function drawLinks(t) {
 }
 
 /* ---------- 손 모양 판별 ---------- */
+// 손가락이 펴졌는지는 '마디가 꺾인 각도'로 봐요. 가능하면 3차원 좌표(worldLandmarks)를 써서 손을 기울여도 덜 흔들려요.
 const d2 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-function classify(lm) {
-  const size = Math.max(d2(lm[0], lm[9]), d2(lm[5], lm[17]) * 1.2) || 1e-6; // 손을 기울여도 크기가 덜 흔들리게
-  const pinchR = d2(lm[4], lm[8]) / size;            // 엄지 끝 ~ 검지 끝 (손 크기 기준)
-  const thumbOut = d2(lm[4], lm[10]) / size > 0.55;   // 엄지가 중지 옆에서 떨어져 있으면 = 엄지를 편 것
-  const idxBent = d2(lm[8], lm[5]) / size < 0.4; // 검지 끝이 검지 뿌리 마디에 붙을 만큼 말림 = 주먹 (집을 때 살짝 굽히는 건 괜찮음)
-  const ext = [[8, 6], [12, 10], [16, 14], [20, 18]].map(([tip, pip]) => d2(lm[0], lm[tip]) > d2(lm[0], lm[pip]) * 1.12);
-  return { size, pinchR, thumbOut, idxBent, ext };
+const d3 = (a, b, zw = 1) => Math.hypot(a.x - b.x, a.y - b.y, ((a.z || 0) - (b.z || 0)) * zw);
+const v3 = (a, b) => [b.x - a.x, b.y - a.y, (b.z || 0) - (a.z || 0)];
+const cosA = (u, v) => (u[0] * v[0] + u[1] * v[1] + u[2] * v[2]) / ((Math.hypot(u[0], u[1], u[2]) || 1e-9) * (Math.hypot(v[0], v[1], v[2]) || 1e-9));
+function classify(q) { // q = 3차원 손 좌표(없으면 화면 좌표)
+  const size = Math.max(d3(q[0], q[9]), d3(q[5], q[17]) * 1.2) || 1e-6;
+  const pinchR = d3(q[4], q[8], 0.6) / size;           // 엄지 끝 ~ 검지 끝 (손 크기 기준, 깊이는 조금만 반영)
+  const thumbR = d3(q[4], q[5]) / size;                // 엄지 끝 ~ 검지 뿌리: 크면 엄지를 벌린 것
+  const straight = [5, 9, 13, 17].map(m => cosA(v3(q[m], q[m + 1]), v3(q[m + 2], q[m + 3]))); // 1 = 곧게 폄, -1 = 완전히 접음
+  const idxPip = cosA(v3(q[5], q[6]), v3(q[6], q[7])); // 검지 가운데 마디가 꺾인 정도
+  return { size, pinchR, thumbR, straight, idxPip };
 }
-const newHand = () => ({ cand: 'none', candN: 0, g: 'none', pinching: false, x: 0, y: 0, sizePx: 0, seen: 0, palmT: 0, pts: null, mode: 'cam', exitN: 0, noErase: 0 });
+// 검지를 손바닥까지 말았으면 주먹 (집을 때 굽히는 정도는 괜찮음)
+const idxCurled = (f, pinching) => pinching ? (f.idxPip < 0 && f.straight[0] < -0.6) : (f.idxPip < 0.25 && f.straight[0] < -0.3);
+const newHand = () => ({ cand: 'none', candN: 0, candT: 0, g: 'none', pinching: false, x: 0, y: 0, sizePx: 0, seen: 0, palmT: 0, pts: null, mode: 'cam', exitT: 0, noErase: 0, ext: [false, false, false, false], wide: false, born: 0 });
 let hand = newHand();
 function rawGesture(f) {
-  const [i, m, r, p] = f.ext;
-  if (!f.idxBent && (hand.pinching ? f.pinchR < 0.5 : f.pinchR < 0.35)) return 'pinch'; // 주먹은 집기로 보지 않음
-  if (i && m && r && p) return 'palm';
-  if (i && !m && !r && !p) return f.thumbOut ? 'ell' : 'point';   // 엄지·검지 브이(L자) / 검지 하나
-  if (!i && !m && !r && !p) return 'fist';                         // 주먹 = 정지
+  const e = hand.ext;
+  f.straight.forEach((c, k) => { e[k] = e[k] ? c > 0.15 : c > 0.5; }); // 폈다/접었다가 경계에서 깜빡이지 않게
+  const [i, m, r, p] = e;
+  if (!idxCurled(f, hand.pinching) && (hand.pinching ? f.pinchR < 0.52 : f.pinchR < 0.35)) return 'pinch';
+  if (i && m && r && p) { hand.wide = false; return 'palm'; }
+  if (i && !m && !r && !p) { // 검지 하나. 엄지를 '크게' 벌렸을 때만 엄지·검지 브이로 봄 (집으려고 다가가는 손과 헷갈리지 않게)
+    hand.wide = hand.wide ? (f.pinchR > 0.8 && f.thumbR > 0.5) : (f.pinchR > 1.0 && f.thumbR > 0.65);
+    return hand.wide ? 'ell' : 'point';
+  }
+  hand.wide = false;
+  if (!i && !m && !r && !p) return 'fist';
   return 'other';
 }
 function toScreen(pt) {
@@ -343,27 +355,35 @@ function toScreen(pt) {
 /* ---------- 손동작 → 별 ---------- */
 let drag = null, pend = null, ell = null, bm = null, hover = null, chain = null, dwell = null, lastSeen = 0, arrowDw = null;
 let trail = [];
-const NEED = { pinch: 2, point: 3, ell: 3, palm: 4, fist: 3, other: 5 };
+const NEED = { pinch: 50, point: 90, ell: 90, palm: 130, fist: 90, other: 150 }; // 같은 손 모양이 이만큼(ms) 이어져야 인정
 const LINK_WAIT = 500;  // 검지로 별 위에 이만큼 머물면 선 시작·잇기
 const LINK_IDLE = 6000; // 이만큼 아무 별도 잇지 않으면 점선이 사라짐
-const BR_WAIT = 300;   // 고른 별 옆에서 엄지·검지 브이를 이만큼 유지하면 밝기 모드
+const BR_WAIT = 450;    // 별 옆에서 엄지·검지 브이를 이만큼 유지하면 밝기 모드
 const TURN = Math.PI * 2 / 3;   // 120° 돌리면 가장 어두움 → 가장 밝음
-function cursorOf(g, lm) {
-  if (g === 'pinch') return { x: (lm[4].x + lm[8].x) / 2, y: (lm[4].y + lm[8].y) / 2 };
-  if (g === 'fist') return { x: (lm[5].x + lm[9].x) / 2, y: (lm[5].y + lm[9].y) / 2 };
-  if (g === 'palm') return { x: (lm[0].x + lm[5].x + lm[9].x + lm[13].x + lm[17].x) / 5, y: (lm[0].y + lm[5].y + lm[9].y + lm[13].y + lm[17].y) / 5 };
-  return lm[8];
+const GRAB_R = () => U() * 0.085;
+const FILL_R = () => U() * 0.012; // 밑그림 별 자리에 별이 놓였다고 보는 거리 (별은 자리에 딱 맞춰 놓임) // 이 안에서 집으면 별 옮기기, 밖이면 새 별
+const palmOf = P => ({ x: (P[0].x + P[5].x + P[9].x + P[13].x + P[17].x) / 5, y: (P[0].y + P[5].y + P[9].y + P[13].y + P[17].y) / 5 });
+function cursorOf(g, P) {
+  if (g === 'pinch') return { x: (P[4].x + P[8].x) / 2, y: (P[4].y + P[8].y) / 2 };
+  if (g === 'fist') return { x: (P[5].x + P[9].x) / 2, y: (P[5].y + P[9].y) / 2 };
+  if (g === 'palm') return palmOf(P);
+  return P[8];
 }
-function onHand(lm, t) {
+function onHand(lm, t, wl) {
   lastSeen = t;
-  hand.pts = lm.map(toScreen);
-  const f = classify(lm);
-  const r = rawGesture(f);
-  if (hand.block) { if (r === 'pinch') { hand.seen = t; return; } hand.block = false; hand.g = 'none'; hand.cand = 'none'; hand.candN = 0; } // 두 손 모드가 끝난 뒤 손을 놓을 때까지는 집기 무시
+  const P = hand.pts = lm.map(toScreen);
+  const f = classify(wl || P);
+  hand.sizePx = Math.max(d2(P[0], P[9]), d2(P[5], P[17]) * 1.2);
+  const dt = Math.min(120, t - (hand.pt || t)); hand.pt = t;
+  let r = rawGesture(f);
+  // 믿기 어려운 손은 아무 일도 하지 않음: 방금 나타난 손, 너무 작게(멀리) 잡힌 손, 손끝이 화면 밖으로 나간 손
+  const off = [4, 8].some(i => lm[i].x < -0.03 || lm[i].x > 1.03 || lm[i].y < -0.03 || lm[i].y > 1.03);
+  if (t - hand.born < 200 || hand.sizePx < U() * 0.04 || off) { r = 'other'; if (pend) pend.no = true; }
+  if (hand.block) { if (r === 'pinch') { hand.seen = t; return; } hand.block = false; hand.g = 'none'; hand.cand = 'none'; hand.candN = 0; hand.candT = 0; } // 두 손·밝기 모드가 끝난 뒤 손을 놓을 때까지는 집기 무시
   // 별똥별: 주먹을 쥐었다가 확 펴며 던지기 (지우개와 헷갈리지 않게 '주먹 → 손바닥' 순서일 때만)
   if (hand.g === 'fist') hand.fistT = t;
   if (r === 'palm' && hand.fistT && t - hand.fistT < 450 && !hand.thrown) {
-    const P = hand.pts, dx = P[12].x - P[0].x, dy = P[12].y - P[0].y, L = Math.hypot(dx, dy) || 1;
+    const dx = P[12].x - P[0].x, dy = P[12].y - P[0].y, L = Math.hypot(dx, dy) || 1;
     spawnMeteor(P[12].x, P[12].y, dx / L, dy / L, t); hand.thrown = true; hand.noErase = t + 900;
   }
   if (r === 'fist') hand.thrown = false;
@@ -371,8 +391,7 @@ function onHand(lm, t) {
   // 밝기 모드: 엄지·검지 브이를 시계 방향으로 돌리면 밝게, 반시계 방향이면 어둡게
   if (bm) {
     hand.g = 'bright'; hand.pinching = false;
-    const ip = toScreen(lm[8]); hand.x = ip.x; hand.y = ip.y; hand.seen = t;
-    hand.sizePx = f.size * ip.sc;
+    hand.x = P[8].x; hand.y = P[8].y; hand.seen = t;
     if (bm.s.dying) { endBright(); return; }
     let d = vAngle() - bm.ang;
     if (d > Math.PI) d -= 2 * Math.PI; if (d < -Math.PI) d += 2 * Math.PI;
@@ -383,22 +402,22 @@ function onHand(lm, t) {
     } else bm.ang = vAngle(); // 다른 손 모양일 땐 각도만 따라가고 밝기는 그대로
     bm.hist.push({ t, b: bm.s.b }); while (bm.hist.length && t - bm.hist[0].t > 400) bm.hist.shift();
     hover = bm.s;
-    hand.exitN = r === 'ell' ? 0 : hand.exitN + (r === 'other' ? 0.5 : r === 'point' ? 0.34 : 1); // 돌리는 중 잠깐 흐트러져도 유지
-    if (hand.exitN > 0 && bm.pre == null) { const h0 = bm.hist[Math.max(0, bm.hist.length - 3)]; bm.pre = h0 ? h0.b : bm.s.b; } // 손 모양이 바뀌기 시작하기 바로 전 밝기
-    if (hand.exitN === 0) bm.pre = null;
-    if (hand.exitN >= 5) { if (bm.pre != null) bm.s.b = bm.pre; endBright(); hand.cand = r; hand.candN = 5; } // 주먹 등으로 끝낼 때 바뀌던 순간의 밝기는 되돌림
+    hand.exitT = r === 'ell' ? 0 : hand.exitT + dt * (r === 'other' || r === 'point' ? 0.5 : 1); // 돌리는 중 잠깐 흐트러져도 유지
+    if (hand.exitT > 0 && bm.pre == null) { const h0 = bm.hist[Math.max(0, bm.hist.length - 3)]; bm.pre = h0 ? h0.b : bm.s.b; } // 손 모양이 바뀌기 시작하기 바로 전 밝기
+    if (hand.exitT === 0) bm.pre = null;
+    const c = palmOf(P), away = Math.hypot(c.x - bm.cx, c.y - bm.cy) > U() * 0.3; // 손을 멀리 옮겨도 끝
+    if (hand.exitT >= 150 || away) { if (bm.pre != null) bm.s.b = bm.pre; endBright(); hand.cand = r; hand.candN = 9; hand.candT = 999; if (r === 'pinch') hand.block = true; } // 끝낼 때 바뀌던 순간의 밝기는 되돌림
     return;
   }
 
   hand.pinching = r === 'pinch';
-  if (r === hand.cand) hand.candN++; else { hand.cand = r; hand.candN = 1; }
+  if (r === hand.cand) { hand.candN++; hand.candT += dt; } else { hand.cand = r; hand.candN = 1; hand.candT = 0; }
   const prevG = hand.g;
-  if (hand.cand !== hand.g && hand.candN >= (NEED[hand.cand] || 4)) hand.g = hand.cand;
-  // 집기를 놓으면 다음 손 모양이 정해질 때까지 기다리지 않고 바로 '놓음'으로 처리 (별이 바로 생기게)
-  if (hand.g === 'pinch' && r !== 'pinch') { hand.offN = (hand.offN || 0) + 1; if (hand.offN >= (drag ? 5 : 2)) hand.g = r === 'other' ? 'none' : r; } else hand.offN = 0; // 옮기는 중엔 손이 흐려져도 잘 안 놓치게
+  if (hand.cand !== hand.g && hand.candN >= 2 && hand.candT >= (NEED[hand.cand] || 120)) hand.g = hand.cand;
+  // 집기를 놓으면 다음 손 모양이 정해질 때까지 기다리지 않고 바로 '놓음'으로 처리 (별이 바로 생기게). 옮기는 중엔 손이 흐려져도 잘 안 놓치게 조금 더 기다림
+  if (hand.g === 'pinch' && r !== 'pinch') { hand.offN = (hand.offN || 0) + 1; hand.offT = (hand.offT || 0) + dt; if (hand.offN >= 2 && hand.offT >= (drag ? 150 : 50)) hand.g = r === 'other' ? 'none' : r; } else { hand.offN = 0; hand.offT = 0; }
   const g = hand.g;
-  const sp = toScreen(cursorOf(g, lm));
-  hand.sizePx = f.size * sp.sc;
+  const sp = cursorOf(g, P);
   if (r !== g && prevG === g && g !== 'none') { hand.seen = t; return; } // 손 모양이 바뀌는 중 = 무시
   const jump = Math.hypot(sp.x - hand.x, sp.y - hand.y);
   const a = t - hand.seen > 300 || prevG !== g ? 1 : (jump > U() * 0.08 || drag ? 0.75 : 0.45);
@@ -409,24 +428,35 @@ function onHand(lm, t) {
   gestureMove(g, t, f);
 }
 function vAngle() { const a = hand.pts[4], b = hand.pts[8]; return Math.atan2(b.y - a.y, b.x - a.x); } // 화면에서 엄지→검지 방향
-function endBright() { bm = null; hand.g = 'none'; hand.exitN = 0; }
+function endBright() { bm = null; hand.g = 'none'; hand.exitT = 0; }
 function gestureStart(g, t) {
   if (g === 'pinch') {
-    const s = nearest(hand.x, hand.y, U() * 0.07) || (hover && !hover.dying && Math.hypot(hover.x - hand.x, hover.y - hand.y) < U() * 0.12 ? hover : null);
+    let s = nearest(hand.x, hand.y, GRAB_R());
+    if (s && st.trace) { // 따라 그리기: 아직 비어 있는 밑그림 별이 더 가까우면 옮기기 대신 새 별 놓기
+      const ds = Math.hypot(s.x - hand.x, s.y - hand.y);
+      if (tplPts().some(p => Math.hypot(p.x - hand.x, p.y - hand.y) < ds && !nearest(p.x, p.y, FILL_R()))) s = null;
+    }
     if (s) { drag = { s, dx: s.x - hand.x, dy: s.y - hand.y, ox: s.x, oy: s.y }; hover = s; }
     else pend = { x: hand.x, y: hand.y, t, moved: 0, no: t < twoEndT + 700 };
   }
   if (g === 'ell') ell = { s: null, t };
   if (g === 'point') dwell = { s: null, t };
-  if (g === 'palm') hand.palmT = t;
+  if (g === 'palm') { hand.palmT = t; hand.path = []; }
 }
-function gestureEnd(g) {
+function gestureEnd(g, t) {
   if (g === 'pinch') {
     if (pend && pend.moved < U() * 0.08 && !pend.no) { const s = placeStar(pend.x, pend.y); if (s) hover = s; }
+    if (drag && st.trace && !drag.s.dying) { // 따라 그리기: 옮긴 별을 가까운 빈 밑그림 자리에 딱 맞춰 놓기
+      const d0 = drag.s; let best = null, bd = U() * 0.045;
+      for (const p of tplPts()) { const d = Math.hypot(p.x - d0.x, p.y - d0.y); if (d < bd && !stars.some(o => o !== d0 && !o.dying && Math.hypot(o.x - p.x, o.y - p.y) < FILL_R())) { bd = d; best = p; } }
+      if (best) { d0.x = best.x; d0.y = best.y; }
+    }
     pend = null; drag = null;
+    hand.noErase = Math.max(hand.noErase, t + 1200); // 놓으면서 손을 활짝 펴도 방금 만든·옮긴 별이 지워지지 않게
   }
   if (g === 'ell') ell = null;
   if (g === 'point') { chain = null; dwell = null; }
+  if (g === 'palm') arrowDw = null;
 }
 function gestureMove(g, t, f) {
   if (g === 'point' || g === 'ell') {
@@ -436,7 +466,7 @@ function gestureMove(g, t, f) {
   if (g === 'ell' && ell) { // 고른 별 옆에서 엄지·검지 브이 → 밝기 모드
     const s = nearest(hand.x, hand.y, U() * 0.08) || (hover && !hover.dying && Math.hypot(hover.x - hand.x, hover.y - hand.y) < U() * 0.25 ? hover : null);
     if (s !== ell.s) { ell.s = s; ell.t = t; }
-    if (s && t - ell.t > BR_WAIT) { bm = { s, ang: vAngle(), hist: [] }; ell = null; hand.g = 'bright'; }
+    if (s && t - ell.t > BR_WAIT) { const c = palmOf(hand.pts); bm = { s, ang: vAngle(), hist: [], cx: c.x, cy: c.y }; ell = null; hand.g = 'bright'; hand.exitT = 0; }
   }
   if (g === 'pinch') {
     if (drag) { drag.s.x = hand.x + drag.dx; drag.s.y = hand.y + drag.dy; }
@@ -453,16 +483,23 @@ function gestureMove(g, t, f) {
     }
     if (chain && (t - chain.t > LINK_IDLE || (chain.last && chain.last.dying))) chain = null;
   }
-  if (g === 'palm' && palmArrow(t)) return;
-  if (g === 'palm' && t - hand.palmT > 400 && t > hand.noErase) {
-    const R = fogR();
-    for (const s of stars) if (!s.dying && Math.hypot(s.x - hand.x, s.y - hand.y) < R * 0.8) killStar(s);
+  if (g === 'palm') {
+    if (palmArrow(t)) return;
+    // 지우개는 '문지를 때'만: 손바닥을 0.4초 넘게 펴고, 최근 0.5초 동안 움직였을 때 (가만히 든 손은 지우지 않음)
+    const pa = hand.path || (hand.path = []); pa.push({ x: hand.x, y: hand.y, t }); while (pa.length && t - pa[0].t > 500) pa.shift();
+    let moved = 0; for (let i = 1; i < pa.length; i++) moved += Math.hypot(pa[i].x - pa[i - 1].x, pa[i].y - pa[i - 1].y);
+    hand.rub = moved > U() * 0.04;
+    if (t - hand.palmT > 400 && t > hand.noErase && hand.rub) {
+      const R = fogR();
+      for (const s of stars) if (!s.dying && Math.hypot(s.x - hand.x, s.y - hand.y) < R * 0.8) killStar(s);
+    }
   }
 }
 function lostHand(t) {
   if (two && curSlot && two.ids.includes(curSlot.id)) endTwo(t);
   if (bm) endBright();
-  if (hand.g !== 'none') { gestureEnd(hand.g, t); hand.g = 'none'; hand.cand = 'none'; hand.candN = 0; hand.pinching = false; }
+  if (pend) pend.no = true; // 집은 채로 손이 화면에서 사라지면 별을 만들지 않음
+  if (hand.g !== 'none') { gestureEnd(hand.g, t); hand.g = 'none'; hand.cand = 'none'; hand.candN = 0; hand.candT = 0; hand.pinching = false; }
   hand.pts = null; trail.length = 0;
 }
 const fogR = () => Math.max(U() * 0.07, hand.sizePx * 0.8);
@@ -496,7 +533,7 @@ function drawHand(t) {
   if (g === 'none' || g === 'other' || g === 'two') return;
   const x = hand.x, y = hand.y, tw = 0.85 + 0.15 * Math.sin(t / 140);
   if (g === 'palm') { // 안개 지우개
-    const on = t - hand.palmT > 400, R = fogR();
+    const on = t - hand.palmT > 400 && hand.rub && t > hand.noErase, R = fogR();
     ctx.save();
     for (let i = 0; i < 6; i++) {
       const ang = t / 1400 + i * 1.047, ox = Math.cos(ang) * R * 0.28, oy = Math.sin(ang * 1.3) * R * 0.22, rr = R * (0.55 + 0.12 * Math.sin(t / 900 + i));
@@ -566,7 +603,7 @@ async function startCamera() {
   $('msg').textContent = '손 인식 준비 중… (처음 한 번은 조금 걸려요)';
   const vision = await import(`${MP_URL}/vision_bundle.mjs`);
   const fileset = await vision.FilesetResolver.forVisionTasks(`${MP_URL}/wasm`);
-  const opts = d => ({ baseOptions: { modelAssetPath: MODEL_URL, delegate: d }, runningMode: 'VIDEO', numHands: st.nh, minHandDetectionConfidence: 0.5, minHandPresenceConfidence: 0.5, minTrackingConfidence: 0.5 });
+  const opts = d => ({ baseOptions: { modelAssetPath: MODEL_URL, delegate: d }, runningMode: 'VIDEO', numHands: st.nh, minHandDetectionConfidence: 0.5, minHandPresenceConfidence: 0.6, minTrackingConfidence: 0.6 });
   try { landmarker = await vision.HandLandmarker.createFromOptions(fileset, opts('GPU')); }
   catch (e) { landmarker = await vision.HandLandmarker.createFromOptions(fileset, opts('CPU')); }
 }
@@ -577,7 +614,7 @@ function detect(t) {
   const res = landmarker.detectForVideo(video, t);
   perf.ms = perf.ms * 0.9 + (performance.now() - t0) * 0.1; perf.n++;
   const lms = (res && res.landmarks) || [], hd = ((res && (res.handednesses || res.handedness)) || []).map(h => h && h[0] ? h[0].categoryName : '');
-  onHands(lms, t, hd);
+  onHands(lms, t, hd, (res && res.worldLandmarks) || []);
 }
 function loop(t) {
   try { detect(t); } catch (e) { console.warn(e); }
@@ -593,10 +630,10 @@ const perf = { ms: 0, n: 0, fps: 0, t: 0 };
 const newSlot = () => ({ id: ++slotId, hand: newHand(), drag: null, pend: null, ell: null, bm: null, hover: null, chain: null, dwell: null, trail: [], hist: [], arrowDw: null, cx: 0, cy: 0, last: 0, lm: null, hd: '', v: null, mT: 0 });
 function useSlot(S) { curSlot = S; hand = S.hand; drag = S.drag; pend = S.pend; ell = S.ell; bm = S.bm; hover = S.hover; chain = S.chain; dwell = S.dwell; trail = S.trail; arrowDw = S.arrowDw; }
 function keepSlot(S) { S.drag = drag; S.pend = pend; S.ell = ell; S.bm = bm; S.hover = hover; S.chain = chain; S.dwell = dwell; S.trail = trail; S.arrowDw = arrowDw; }
-const pinchKeep = f => !f.idxBent && f.pinchR < 0.5, pinchStart = f => !f.idxBent && f.pinchR < 0.33;
+const pinchKeep = f => !idxCurled(f, true) && f.pinchR < 0.55, pinchStart = f => !idxCurled(f, false) && f.pinchR < 0.35;
 const pinchPt = P => ({ x: (P[4].x + P[8].x) / 2, y: (P[4].y + P[8].y) / 2 });
 const palmC = P => ({ x: (P[0].x + P[5].x + P[9].x + P[13].x + P[17].x) / 5, y: (P[0].y + P[5].y + P[9].y + P[13].y + P[17].y) / 5 });
-function onHands(arr, t, hd) {
+function onHands(arr, t, hd, wls) {
   perf.fps = perf.t ? perf.fps * 0.9 + 100 / Math.max(1, t - perf.t) : 0; perf.t = t;
   // 1) 이번 프레임의 손들을 지난 프레임의 손(슬롯)과 가까운 것끼리 짝짓기
   const P = arr.map(lm => lm.map(toScreen)), C = P.map(palmC), used = new Set(), got = new Map();
@@ -604,7 +641,7 @@ function onHands(arr, t, hd) {
   slots.forEach(S => C.forEach((c, i) => pairs.push([Math.hypot(c.x - S.cx, c.y - S.cy), S, i])));
   pairs.sort((a, b) => a[0] - b[0]);
   for (const [d, S, i] of pairs) { if (d > U() * (t - S.last > 100 ? 1.1 : 0.35) || got.has(S) || used.has(i)) continue; got.set(S, i); used.add(i); }
-  C.forEach((c, i) => { if (!used.has(i)) { const S = newSlot(); S.cx = c.x; S.cy = c.y; slots.push(S); got.set(S, i); } });
+  C.forEach((c, i) => { if (!used.has(i)) { const S = newSlot(); S.hand.born = t; S.cx = c.x; S.cy = c.y; slots.push(S); got.set(S, i); } });
   // 2) 사라진 손 정리 (빨리 휘두르다 사라지면 별똥별)
   slots = slots.filter(S => {
     if (got.has(S)) return true;
@@ -613,10 +650,10 @@ function onHands(arr, t, hd) {
   });
   // 3) 손마다 처리
   for (const [S, i] of got) {
-    S.lm = arr[i]; S.pts = P[i]; S.hd = hd[i] || ''; S.f = classify(arr[i]);
+    S.lm = arr[i]; S.wl = (wls && wls[i]) || null; S.pts = P[i]; S.hd = hd[i] || ''; S.f = classify(S.wl || P[i]);
     const c = C[i], gap = t - S.last;
     S.cx = c.x; S.cy = c.y; S.last = t;
-    const pk = S.wasPinch ? pinchKeep(S.f) : pinchStart(S.f);
+    const pk = t - S.hand.born > 200 && (S.wasPinch ? pinchKeep(S.f) : pinchStart(S.f));
     if (pk && !S.wasPinch) S.pinchT = t;
     S.wasPinch = pk;
   }
@@ -628,6 +665,7 @@ function onHands(arr, t, hd) {
     else {
       two.off = pinchKeep(A.f) && pinchKeep(B.f) ? 0 : two.off + 1;
       if (two.off >= 4) endTwo(t);
+      else if (two.off > 0) { for (const S of [A, B]) { S.hand.pts = S.pts; S.hand.seen = t; } } // 한 손이 풀리는 중엔 별을 움직이지 않음(놓을 때 별이 튀지 않게)
       else {
         for (const S of [A, B]) { S.hand.pts = S.pts; S.hand.seen = t; S.hand.g = 'two'; }
         const a = pinchPt(A.pts), b = pinchPt(B.pts), d = Math.max(10, Math.hypot(a.x - b.x, a.y - b.y)), m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
@@ -653,13 +691,13 @@ function onHands(arr, t, hd) {
   }
   for (const [S] of got) {
     if (two && two.ids.includes(S.id)) continue;
-    useSlot(S); onHand(S.lm, t); keepSlot(S);
+    useSlot(S); onHand(S.lm, t, S.wl); keepSlot(S);
   }
   if (got.size) lastSeen = t;
 }
 function endTwo(t) {
   if (!two) return;
-  for (const id of two.ids) { const S = slots.find(x => x.id === id); if (S) { S.hand.g = 'none'; S.hand.cand = 'none'; S.hand.candN = 0; S.pend = null; S.drag = null; S.hand.block = true; } }
+  for (const id of two.ids) { const S = slots.find(x => x.id === id); if (S) { S.hand.g = 'none'; S.hand.cand = 'none'; S.hand.candN = 0; S.hand.candT = 0; S.pend = null; S.drag = null; S.hand.block = true; S.hand.noErase = t + 1200; } }
   two = null; twoN = 0; twoEndT = t;
 }
 function drawTwo(t) {
@@ -703,7 +741,7 @@ function tplPts() { const c = CONS[st.ci], cx = W / 2, cy = H * 0.44, R = Math.m
 function placeStar(x, y) { // 따라 그리기 중이면 가까운 밑그림 별 자리에 딱 맞춰 놓기
   if (st.trace) {
     const T = tplPts(), R = U() * 0.055; let best = null, bd = R;
-    for (const p of T) { const d = Math.hypot(p.x - x, p.y - y); if (d < bd && !nearest(p.x, p.y, U() * 0.02)) { bd = d; best = p; } }
+    for (const p of T) { const d = Math.hypot(p.x - x, p.y - y); if (d < bd && !nearest(p.x, p.y, FILL_R())) { bd = d; best = p; } }
     if (best) return addStar(best.x, best.y, bFromMag(best.m), true);
   }
   return addStar(x, y);
@@ -718,13 +756,13 @@ function palmArrow(t) { // 손바닥을 화살표에 0.6초 올리면 넘기기
   if (!a) { arrowDw = null; return false; }
   if (t < arrowLock) return true;
   if (!arrowDw || arrowDw.dir !== a.dir) arrowDw = { dir: a.dir, t };
-  if (t - arrowDw.t > 600) { goCons(a.dir, t); arrowDw = null; }
+  if (t - arrowDw.t > 800) { goCons(a.dir, t); arrowDw = null; }
   return true;
 }
 function drawTemplate(t) {
   arrows = [];
   if (!st.trace) return;
-  const c = CONS[st.ci], T = tplPts(), Rm = U() * 0.035, k = U() / 900;
+  const c = CONS[st.ci], T = tplPts(), Rm = FILL_R(), k = U() / 900;
   const M = T.map(p => nearest(p.x, p.y, Rm));
   ctx.save(); ctx.lineCap = 'round';
   for (const [i, j] of c.l) {
@@ -758,7 +796,7 @@ function drawTemplate(t) {
   for (const dir of [-1, 1]) {
     const ax = W / 2 + dir * gap, ay = y;
     arrows.push({ x: ax, y: ay, r: ar, dir });
-    const dw = slots.map(S => S.arrowDw).find(Boolean); const hot = dw && dw.dir === dir ? Math.min(1, (t - dw.t) / 600) : 0;
+    const dw = slots.map(S => S.arrowDw).find(Boolean); const hot = dw && dw.dir === dir ? Math.min(1, (t - dw.t) / 800) : 0;
     ctx.save(); ctx.strokeStyle = 'rgba(244,239,226,.5)'; ctx.lineWidth = 1.5; ctx.fillStyle = `rgba(233,207,142,${0.06 + 0.2 * hot})`;
     ctx.beginPath(); ctx.arc(ax, ay, ar, 0, 6.283); ctx.fill(); ctx.stroke();
     ctx.strokeStyle = 'rgba(244,239,226,.85)'; ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
@@ -873,6 +911,9 @@ $('go').onclick = async () => {
 $('touchOnly').onclick = () => { hand.mode = 'touch'; begin(); };
 if (TEST) {
   window.__tpl = () => tplPts(); window.__st = st; window.__meteors = () => meteors.length; window.__two = () => !!two;
+  window.__raw = (P, wl) => { const keep = hand; hand = newHand(); const r = rawGesture(classify(wl || P)); hand = keep; return r; };
+  window.__arrows = () => arrows;
+  window.__slots = () => slots.map(S => ({ g: S.hand.g, bm: !!S.bm, drag: !!S.drag, chain: !!S.chain }));
   window.__state = () => ({ trace: st.trace, ci: st.ci, done: !!traceDone, stars: stars.filter(s => !s.dying).map(s => ({ id: s.id, x: Math.round(s.x), y: Math.round(s.y), b: +s.b.toFixed(2) })), links: links.map(l => [l.a, l.b]), g: hand.g });
   window.__setStars = arr => { stars = []; links = []; arr.forEach(([x, y, b]) => { const s = addStar(x, y, b); if (s) s.born -= 2000; }); };
   window.__link = pairs => { pairs.forEach(([a, b]) => link(stars[a], stars[b])); links.forEach(l => l.born -= 2000); };
