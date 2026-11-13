@@ -79,10 +79,11 @@ html,body{margin:0;height:100%;background:#000;color:var(--ink);font-family:"Gow
 <div id="panel">
   <label>카메라 밝기 <span id="vB"></span><input type="range" id="sB" min="5" max="120" step="1"></label>
   <label>카메라 투명도 <span id="vA"></span><input type="range" id="sA" min="0" max="100" step="1"></label>
+  <label>한 번에 인식할 손 <span id="vN"></span><input type="range" id="sN" min="1" max="6" step="1"></label>
   <div class="row"><button id="bTrace">별자리 따라 그리기 켜기</button></div>
   <div class="row"><button id="bClear">모두 지우기</button><button id="bFlip">좌우 반전</button></div>
   <div class="row"><button id="bHelp">손 모양 안내</button></div>
-  <div class="ver" id="ver"></div>
+  <div class="ver" id="spd"></div><div class="ver" id="ver"></div>
 </div>
 <div id="help"><div class="card"><h3>손 모양</h3><ul class="guide" id="guide2"></ul></div></div>
 <div class="toast" id="toast"></div>
@@ -102,7 +103,7 @@ html,body{margin:0;height:100%;background:#000;color:var(--ink);font-family:"Gow
 <script>
 (() => {
 'use strict';
-const APP_VER = '11월 13일 00:52 수정본';
+const APP_VER = '11월 13일 09:06 수정본';
 const MP_VER = '0.10.14';
 const MP_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VER}`;
 const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
@@ -201,7 +202,7 @@ addEventListener('resize', resize); resize();
 const U = () => Math.min(W, H);
 
 /* ---------- 설정 (카메라 밝기·투명도·반전) ---------- */
-const st = { mirror: true, camB: 50, camA: 100, trace: false, ci: 15 };
+const st = { mirror: true, camB: 50, camA: 100, trace: false, ci: 15, nh: 4 };
 try { Object.assign(st, JSON.parse(localStorage.getItem('starhand-set2') || '{}')); } catch (e) {}
 const saveSet = () => { try { localStorage.setItem('starhand-set2', JSON.stringify(st)); } catch (e) {} };
 function applySet() {
@@ -209,10 +210,12 @@ function applySet() {
   document.documentElement.style.setProperty('--camB', st.camB / 100);
   document.documentElement.style.setProperty('--camA', st.camA / 100);
   $('sB').value = st.camB; $('sA').value = st.camA;
+  $('sN').value = st.nh; $('vN').textContent = st.nh + '개 (' + Math.ceil(st.nh / 2) + '명)';
   $('vB').textContent = st.camB + '%'; $('vA').textContent = (100 - st.camA) + '%';
   $('bTrace').textContent = st.trace ? '별자리 따라 그리기 끄기' : '별자리 따라 그리기 켜기'; $('bTrace').classList.toggle('on', st.trace);
 }
 $('sB').oninput = e => { st.camB = +e.target.value; applySet(); saveSet(); };
+$('sN').oninput = e => { st.nh = +e.target.value; applySet(); saveSet(); if (landmarker) Promise.resolve(landmarker.setOptions({ numHands: st.nh })).catch(() => {}); };
 $('sA').oninput = e => { st.camA = +e.target.value; applySet(); saveSet(); };
 applySet();
 // 투명도 슬라이더는 '불투명한 정도'를 움직이되, 숫자는 투명한 정도로 보여 줘요 (오른쪽 = 카메라가 또렷)
@@ -295,7 +298,8 @@ function classify(lm) {
   const ext = [[8, 6], [12, 10], [16, 14], [20, 18]].map(([tip, pip]) => d2(lm[0], lm[tip]) > d2(lm[0], lm[pip]) * 1.12);
   return { size, pinchR, thumbOut, idxBent, ext };
 }
-const hand = { cand: 'none', candN: 0, g: 'none', pinching: false, x: 0, y: 0, sizePx: 0, seen: 0, palmT: 0, pts: null, mode: 'cam', exitN: 0 };
+const newHand = () => ({ cand: 'none', candN: 0, g: 'none', pinching: false, x: 0, y: 0, sizePx: 0, seen: 0, palmT: 0, pts: null, mode: 'cam', exitN: 0, noErase: 0 });
+let hand = newHand();
 function rawGesture(f) {
   const [i, m, r, p] = f.ext;
   if (!f.idxBent && (hand.pinching ? f.pinchR < 0.45 : f.pinchR < 0.30)) return 'pinch'; // 주먹은 집기로 보지 않음
@@ -312,8 +316,8 @@ function toScreen(pt) {
 }
 
 /* ---------- 손동작 → 별 ---------- */
-let drag = null, pend = null, ell = null, bm = null, hover = null, chain = null, dwell = null, lastSeen = 0;
-const trail = [];
+let drag = null, pend = null, ell = null, bm = null, hover = null, chain = null, dwell = null, lastSeen = 0, arrowDw = null;
+let trail = [];
 const NEED = { pinch: 2, point: 3, ell: 3, palm: 4, fist: 3, other: 5 };
 const LINK_WAIT = 500;  // 검지로 별 위에 이만큼 머물면 선 시작·잇기
 const LINK_IDLE = 6000; // 이만큼 아무 별도 잇지 않으면 점선이 사라짐
@@ -409,13 +413,13 @@ function gestureMove(g, t, f) {
     if (chain && (t - chain.t > LINK_IDLE || (chain.last && chain.last.dying))) chain = null;
   }
   if (g === 'palm' && palmArrow(t)) return;
-  if (g === 'palm' && t - hand.palmT > 400 && t > noEraseUntil) {
+  if (g === 'palm' && t - hand.palmT > 400 && t > hand.noErase) {
     const R = fogR();
     for (const s of stars) if (!s.dying && Math.hypot(s.x - hand.x, s.y - hand.y) < R * 0.8) killStar(s);
   }
 }
 function lostHand(t) {
-  if (two) endTwo(t);
+  if (two && curSlot && two.ids.includes(curSlot.id)) endTwo(t);
   if (bm) endBright();
   if (hand.g !== 'none') { gestureEnd(hand.g, t); hand.g = 'none'; hand.cand = 'none'; hand.candN = 0; hand.pinching = false; }
   hand.pts = null; trail.length = 0;
@@ -448,7 +452,7 @@ function drawHand(t) {
     ctx.beginPath(); ctx.arc(P[i].x, P[i].y, tip ? 2.2 : 1.5, 0, 6.283); ctx.fill();
   }
   ctx.restore();
-  if (g === 'none' || g === 'other') return;
+  if (g === 'none' || g === 'other' || g === 'two') return;
   const x = hand.x, y = hand.y, tw = 0.85 + 0.15 * Math.sin(t / 140);
   if (g === 'palm') { // 안개 지우개
     const on = t - hand.palmT > 400, R = fogR();
@@ -504,9 +508,11 @@ function frame(t) {
   stars = stars.filter(s => !s.dying || t - s.dying < 470);
   if (!capturing) drawTemplate(t);
   drawLinks(t);
-  for (const s of stars) drawStar(s, t, !capturing && s === hover && hand.g !== 'none' && hand.g !== 'palm' && hand.g !== 'other');
+  const hov = new Set(); if (touchHover) hov.add(touchHover);
+  for (const S of slots) if (S.hover && !['none', 'palm', 'other'].includes(S.hand.g)) hov.add(S.hover);
+  for (const s of stars) drawStar(s, t, !capturing && hov.has(s));
   drawMeteors(t); drawBits(t);
-  if (!capturing && t - lastSeen < 400) { drawHand(t); drawSecond(t); drawBright(); drawTwo(t); }
+  if (!capturing) { for (const S of slots) { if (t - S.hand.seen > 400) continue; useSlot(S); drawHand(t); drawBright(); keepSlot(S); } drawTwo(t); }
 }
 
 /* ---------- 카메라 + 손 인식 ---------- */
@@ -514,69 +520,103 @@ let landmarker = null, lastVT = -1;
 async function startCamera() {
   $('msg').textContent = '카메라를 켜는 중…';
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('이 브라우저는 카메라를 쓸 수 없어요 (https 주소인지 확인해 주세요)');
-  const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+  const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 960 }, height: { ideal: 540 }, frameRate: { ideal: 30 } }, audio: false });
   video.srcObject = stream; await video.play();
   $('msg').textContent = '손 인식 준비 중… (처음 한 번은 조금 걸려요)';
   const vision = await import(`${MP_URL}/vision_bundle.mjs`);
   const fileset = await vision.FilesetResolver.forVisionTasks(`${MP_URL}/wasm`);
-  const opts = d => ({ baseOptions: { modelAssetPath: MODEL_URL, delegate: d }, runningMode: 'VIDEO', numHands: 2, minHandDetectionConfidence: 0.6, minHandPresenceConfidence: 0.6, minTrackingConfidence: 0.5 });
+  const opts = d => ({ baseOptions: { modelAssetPath: MODEL_URL, delegate: d }, runningMode: 'VIDEO', numHands: st.nh, minHandDetectionConfidence: 0.5, minHandPresenceConfidence: 0.5, minTrackingConfidence: 0.5 });
   try { landmarker = await vision.HandLandmarker.createFromOptions(fileset, opts('GPU')); }
   catch (e) { landmarker = await vision.HandLandmarker.createFromOptions(fileset, opts('CPU')); }
 }
 function detect(t) {
   if (!landmarker || video.readyState < 2 || video.currentTime === lastVT) return;
   lastVT = video.currentTime;
+  const t0 = performance.now();
   const res = landmarker.detectForVideo(video, t);
-  if (res && res.landmarks && res.landmarks.length) onHands(res.landmarks, t);
-  else if (t - lastSeen > 250) { lostHand(t); secPts = null; }
+  perf.ms = perf.ms * 0.9 + (performance.now() - t0) * 0.1; perf.n++;
+  const lms = (res && res.landmarks) || [], hd = ((res && (res.handednesses || res.handedness)) || []).map(h => h && h[0] ? h[0].categoryName : '');
+  onHands(lms, t, hd);
 }
 function loop(t) {
   try { detect(t); } catch (e) { console.warn(e); }
-  if (TEST && window.__hand !== undefined) { const h = window.__hand; window.__hand = undefined; if (h) onHands(Array.isArray(h[0]) ? h : [h], t); else { lostHand(t); secPts = null; } }
+  if (TEST && window.__hand !== undefined) { const h = window.__hand; window.__hand = undefined; onHands(h && h.length ? (Array.isArray(h[0]) ? h : [h]) : [], t, window.__hd || []); }
   frame(t);
   requestAnimationFrame(loop);
 }
 
-/* ---------- 두 손: 둘 다 집으면 별 전체를 크게·작게 ---------- */
-let secPts = null, two = null, twoN = 0, twoOff = 0, twoEndT = -1e9, capturing = false;
+/* ---------- 여러 손: 손마다 따로 별을 만들고 옮겨요 ---------- */
+let slots = [], curSlot = null, slotId = 0, touchHover = null;
+let two = null, twoN = 0, twoEndT = -1e9, capturing = false;
+const perf = { ms: 0, n: 0, fps: 0, t: 0 };
+const newSlot = () => ({ id: ++slotId, hand: newHand(), drag: null, pend: null, ell: null, bm: null, hover: null, chain: null, dwell: null, trail: [], hist: [], arrowDw: null, cx: 0, cy: 0, last: 0, lm: null, hd: '', v: null, mT: 0 });
+function useSlot(S) { curSlot = S; hand = S.hand; drag = S.drag; pend = S.pend; ell = S.ell; bm = S.bm; hover = S.hover; chain = S.chain; dwell = S.dwell; trail = S.trail; arrowDw = S.arrowDw; }
+function keepSlot(S) { S.drag = drag; S.pend = pend; S.ell = ell; S.bm = bm; S.hover = hover; S.chain = chain; S.dwell = dwell; S.trail = trail; S.arrowDw = arrowDw; }
 const pinchKeep = f => !f.idxBent && f.pinchR < 0.5, pinchStart = f => !f.idxBent && f.pinchR < 0.33;
 const pinchPt = P => ({ x: (P[4].x + P[8].x) / 2, y: (P[4].y + P[8].y) / 2 });
-function onHands(arr, t) {
-  if (arr.length < 2) { if (two) endTwo(t); secPts = null; swipeCheck(arr[0].map(toScreen), 'a', t); onHand(arr[0], t); return; }
-  const tips = arr.map(lm => toScreen(lm[8]));
-  let pi = 0;
-  if (t - hand.seen < 600) pi = Math.hypot(tips[0].x - hand.x, tips[0].y - hand.y) <= Math.hypot(tips[1].x - hand.x, tips[1].y - hand.y) ? 0 : 1;
-  const A = arr[pi], B = arr[1 - pi], fa = classify(A), fb = classify(B);
-  const PA = A.map(toScreen), PB = B.map(toScreen);
-  secPts = PB;
-  swipeCheck(PA, 'a', t); swipeCheck(PB, 'b', t);
+const palmC = P => ({ x: (P[0].x + P[5].x + P[9].x + P[13].x + P[17].x) / 5, y: (P[0].y + P[5].y + P[9].y + P[13].y + P[17].y) / 5 });
+function onHands(arr, t, hd) {
+  perf.fps = perf.t ? perf.fps * 0.9 + 100 / Math.max(1, t - perf.t) : 0; perf.t = t;
+  // 1) 이번 프레임의 손들을 지난 프레임의 손(슬롯)과 가까운 것끼리 짝짓기
+  const P = arr.map(lm => lm.map(toScreen)), C = P.map(palmC), used = new Set(), got = new Map();
+  const pairs = [];
+  slots.forEach(S => C.forEach((c, i) => pairs.push([Math.hypot(c.x - S.cx, c.y - S.cy), S, i])));
+  pairs.sort((a, b) => a[0] - b[0]);
+  for (const [d, S, i] of pairs) { if (d > U() * (t - S.last > 100 ? 1.1 : 0.35) || got.has(S) || used.has(i)) continue; got.set(S, i); used.add(i); }
+  C.forEach((c, i) => { if (!used.has(i)) { const S = newSlot(); S.cx = c.x; S.cy = c.y; slots.push(S); got.set(S, i); } });
+  // 2) 사라진 손 정리 (빨리 휘두르다 사라지면 별똥별)
+  slots = slots.filter(S => {
+    if (got.has(S)) return true;
+    if (t - S.last < 250) return true;
+    if (S.v && t - S.v.t < 200 && S.v.sp > U() * 0.9 && t - S.mT > 600) spawnMeteor(S.cx, S.cy, S.v.dx, S.v.dy, t);
+    useSlot(S); lostHand(t); keepSlot(S); return false;
+  });
+  // 3) 손마다 처리
+  for (const [S, i] of got) {
+    S.lm = arr[i]; S.pts = P[i]; S.hd = hd[i] || ''; S.f = classify(arr[i]);
+    const c = C[i], gap = t - S.last;
+    if (S.last && gap > 120 && gap < 450 && Math.hypot(c.x - S.cx, c.y - S.cy) > U() * 0.22 && t - S.mT > 600 && !['pinch', 'bright', 'two'].includes(S.hand.g)) {
+      const dx = c.x - S.cx, dy = c.y - S.cy, L = Math.hypot(dx, dy); S.mT = t; S.hand.noErase = t + 700; spawnMeteor(S.cx, S.cy, dx / L, dy / L, t); // 흐려졌다 멀리서 다시 잡힘
+    }
+    S.cx = c.x; S.cy = c.y; S.last = t;
+    swipeCheck(S, c, t);
+  }
+  // 4) 두 손 모드: 왼손·오른손이 거의 동시에 집으면 별 전체를 크게·작게
   if (two) {
-    twoOff = pinchKeep(fa) && pinchKeep(fb) ? 0 : twoOff + 1;
-    if (twoOff >= 4) { endTwo(t); onHand(A, t); return; }
-    lastSeen = t; hand.seen = t; hand.pts = PA;
-    const a = pinchPt(PA), b = pinchPt(PB), d = Math.max(10, Math.hypot(a.x - b.x, a.y - b.y)), m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-    const k = Math.max(0.25, Math.min(4, d / two.d0));
-    two.k = k; two.a = a; two.b = b;
-    for (const o of two.snap) { if (o.s.dying) continue; o.s.x = m.x + (o.x - two.m0.x) * k; o.s.y = m.y + (o.y - two.m0.y) * k; }
-    return;
+    const A = slots.find(S => S.id === two.ids[0]), B = slots.find(S => S.id === two.ids[1]);
+    if (!A || !B || !got.has(A) || !got.has(B)) { if (A || B) endTwo(t); }
+    else {
+      two.off = pinchKeep(A.f) && pinchKeep(B.f) ? 0 : two.off + 1;
+      if (two.off >= 4) endTwo(t);
+      else {
+        for (const S of [A, B]) { S.hand.pts = S.pts; S.hand.seen = t; S.hand.g = 'two'; }
+        const a = pinchPt(A.pts), b = pinchPt(B.pts), d = Math.max(10, Math.hypot(a.x - b.x, a.y - b.y)), m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+        const k = Math.max(0.25, Math.min(4, d / two.d0)); two.a = a; two.b = b;
+        for (const o of two.snap) { if (o.s.dying) continue; o.s.x = m.x + (o.x - two.m0.x) * k; o.s.y = m.y + (o.y - two.m0.y) * k; }
+      }
+    }
   }
-  twoN = pinchStart(fa) && pinchStart(fb) ? twoN + 1 : 0;
-  if (twoN >= 3) { // 두 손 모드 시작: 한 손으로 하던 일은 취소(별이 생기지 않게)
-    pend = null; drag = null; if (bm) endBright(); chain = null; ell = null; dwell = null;
-    const a = pinchPt(PA), b = pinchPt(PB);
-    two = { d0: Math.max(10, Math.hypot(a.x - b.x, a.y - b.y)), m0: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, snap: stars.filter(s => !s.dying).map(s => ({ s, x: s.x, y: s.y })), a, b, k: 1 };
-    hand.g = 'two'; hand.pts = PA; lastSeen = t; twoOff = 0;
-    return;
+  if (!two) {
+    const pin = [...got.keys()].filter(S => pinchStart(S.f) && !S.drag);
+    const pairOK = pin.length === 2 && (!pin[0].hd || !pin[1].hd || pin[0].hd !== pin[1].hd); // 한 사람의 두 손(왼손+오른손)만
+    twoN = pairOK ? twoN + 1 : 0;
+    if (twoN >= 3) {
+      const [A, B] = pin;
+      for (const S of [A, B]) { useSlot(S); pend = null; drag = null; if (bm) endBright(); chain = null; ell = null; dwell = null; hand.g = 'two'; hand.pts = S.pts; hand.seen = t; keepSlot(S); }
+      const a = pinchPt(A.pts), b = pinchPt(B.pts);
+      two = { ids: [A.id, B.id], off: 0, d0: Math.max(10, Math.hypot(a.x - b.x, a.y - b.y)), m0: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, snap: stars.filter(s => !s.dying).map(s => ({ s, x: s.x, y: s.y })), a, b };
+    }
   }
-  onHand(A, t);
+  for (const [S] of got) {
+    if (two && two.ids.includes(S.id)) continue;
+    useSlot(S); onHand(S.lm, t); keepSlot(S);
+  }
+  if (got.size) lastSeen = t;
 }
-function endTwo(t) { two = null; twoN = 0; twoEndT = t; hand.g = 'none'; hand.cand = 'none'; hand.candN = 0; pend = null; }
-function drawSecond() { // 두 번째 손의 마디도 흐린 별가루로
-  const P = secPts; if (!P) return;
-  ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.strokeStyle = 'rgba(200,215,255,.08)'; ctx.lineWidth = 1;
-  ctx.beginPath(); for (const [a, b] of BONES) { ctx.moveTo(P[a].x, P[a].y); ctx.lineTo(P[b].x, P[b].y); } ctx.stroke();
-  for (let i = 0; i < 21; i++) { ctx.fillStyle = 'rgba(230,236,255,.14)'; ctx.beginPath(); ctx.arc(P[i].x, P[i].y, 1.5, 0, 6.283); ctx.fill(); }
-  ctx.restore();
+function endTwo(t) {
+  if (!two) return;
+  for (const id of two.ids) { const S = slots.find(x => x.id === id); if (S) { S.hand.g = 'none'; S.hand.cand = 'none'; S.hand.candN = 0; S.pend = null; S.drag = null; } }
+  two = null; twoN = 0; twoEndT = t;
 }
 function drawTwo(t) {
   if (!two || !two.a) return;
@@ -587,16 +627,16 @@ function drawTwo(t) {
 }
 
 /* ---------- 별똥별: 손을 빠르게 휘두르면 ---------- */
-const meteors = [], hist = { a: [], b: [] };
-let meteorT = 0, noEraseUntil = 0;
-function swipeCheck(P, key, t) {
-  const h = hist[key], p = P[9];
-  h.push({ x: p.x, y: p.y, t }); while (h.length && t - h[0].t > 140) h.shift();
-  if (h.length < 3 || t - meteorT < 650) return;
-  if (key === 'a' && (hand.g === 'pinch' || hand.g === 'bright' || hand.g === 'two')) return;
-  const o = h[0], dt = (t - o.t) / 1000; if (dt < 0.05) return;
-  const vx = (p.x - o.x) / dt, vy = (p.y - o.y) / dt, sp = Math.hypot(vx, vy);
-  if (sp > U() * 2.2) { meteorT = t; noEraseUntil = t + 700; spawnMeteor(p.x, p.y, vx / sp, vy / sp, t); h.length = 0; }
+const meteors = [];
+function swipeCheck(S, c, t) { // 손바닥 가운데가 0.06~0.3초 사이에 빠르게 멀리 움직이면
+  const h = S.hist; h.push({ x: c.x, y: c.y, t }); while (h.length && t - h[0].t > 300) h.shift();
+  if (h.length < 2) return;
+  let o = h[0]; for (const q of h) { if (t - q.t >= 60) o = q; }
+  const dt = (t - o.t) / 1000; if (dt < 0.04) return;
+  const dx = c.x - o.x, dy = c.y - o.y, L = Math.hypot(dx, dy), sp = L / dt;
+  S.v = { sp, dx: dx / (L || 1), dy: dy / (L || 1), t };
+  if (t - S.mT < 600 || ['pinch', 'bright', 'two'].includes(S.hand.g)) return;
+  if (sp > U() * 1.1 && L > U() * 0.12) { S.mT = t; S.hand.noErase = t + 700; spawnMeteor(c.x, c.y, dx / L, dy / L, t); h.length = 0; }
 }
 function spawnMeteor(x, y, dx, dy, t) {
   const sp = U() * (0.9 + Math.random() * 0.5) / 1000; // px/ms
@@ -624,7 +664,7 @@ function drawBits(t) {
 }
 
 /* ---------- 별자리 따라 그리기 ---------- */
-let traceDone = false, arrows = [], arrowDw = null, arrowLock = 0;
+let traceDone = false, arrows = [], arrowLock = 0;
 function tplPts() { const c = CONS[st.ci], cx = W / 2, cy = H * 0.44, R = Math.min(W * 0.34, H * 0.33); return c.s.map(p => ({ x: cx + p[0] * R, y: cy + p[1] * R, m: p[2] })); }
 function placeStar(x, y) { // 따라 그리기 중이면 가까운 밑그림 별 자리에 딱 맞춰 놓기
   if (st.trace) {
@@ -684,7 +724,7 @@ function drawTemplate(t) {
   for (const dir of [-1, 1]) {
     const ax = W / 2 + dir * gap, ay = y;
     arrows.push({ x: ax, y: ay, r: ar, dir });
-    const hot = arrowDw && arrowDw.dir === dir ? Math.min(1, (t - arrowDw.t) / 600) : 0;
+    const dw = slots.map(S => S.arrowDw).find(Boolean); const hot = dw && dw.dir === dir ? Math.min(1, (t - dw.t) / 600) : 0;
     ctx.save(); ctx.strokeStyle = 'rgba(244,239,226,.5)'; ctx.lineWidth = 1.5; ctx.fillStyle = `rgba(233,207,142,${0.06 + 0.2 * hot})`;
     ctx.beginPath(); ctx.arc(ax, ay, ar, 0, 6.283); ctx.fill(); ctx.stroke();
     ctx.strokeStyle = 'rgba(244,239,226,.85)'; ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
@@ -702,7 +742,7 @@ cv.addEventListener('pointerdown', e => {
   const s = nearest(e.clientX, e.clientY, U() * 0.06);
   tp = { id: e.pointerId, x: e.clientX, y: e.clientY, s, dx: s ? s.x - e.clientX : 0, dy: s ? s.y - e.clientY : 0, moved: 0, b0: s ? s.b : 0, bright: false };
   cv.setPointerCapture(e.pointerId);
-  if (s) { hover = s; tp.hold = setTimeout(() => { if (tp && tp.moved < 8) { tp.bright = true; toast('위아래로 끌면 밝기'); } }, 550); }
+  if (s) { touchHover = s; tp.hold = setTimeout(() => { if (tp && tp.moved < 8) { tp.bright = true; toast('위아래로 끌면 밝기'); } }, 550); }
 });
 cv.addEventListener('pointermove', e => {
   if (!tp || tp.id !== e.pointerId) return;
@@ -723,6 +763,7 @@ cv.addEventListener('pointerup', e => {
 
 /* ---------- 조절판 ---------- */
 let knobT = 0;
+setInterval(() => { if ($('panel').classList.contains('open')) $('spd').textContent = landmarker ? `인식 속도 ${Math.round(perf.fps)}번/초 · 한 번 ${perf.ms.toFixed(0)}ms` : ''; }, 500);
 $('knob').onclick = () => { $('panel').classList.toggle('open'); $('knob').classList.remove('dim'); clearTimeout(knobT); knobT = setTimeout(() => $('knob').classList.add('dim'), 4000); };
 $('bFlip').onclick = () => { st.mirror = !st.mirror; saveSet(); applySet(); };
 $('bHelp').onclick = () => { $('panel').classList.remove('open'); $('help').classList.add('open'); };
